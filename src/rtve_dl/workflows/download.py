@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 from rtve_dl.ffmpeg import download_to_mp4, mux_mkv
@@ -11,6 +12,7 @@ from rtve_dl.rtve.resolve import RtveResolver
 from rtve_dl.subs.srt import cues_to_srt
 from rtve_dl.subs.vtt import parse_vtt
 from rtve_dl.log import debug, stage
+from rtve_dl.ru import setup_argos_model, translate_es_cues_to_ru_jsonl
 
 
 def _slugify(s: str) -> str:
@@ -86,6 +88,8 @@ def download_selector(
     *,
     series_slug: str | None,
     quality: str,
+    with_ru: bool,
+    argos_model: str | None,
 ) -> int:
     http = HttpClient()
     with stage("catalog"):
@@ -149,6 +153,37 @@ def download_selector(
                     else:
                         debug(f"cache hit srt: {srt_en}")
                     subs.append((srt_en, "eng", "English"))
+
+        if with_ru:
+            with stage("argos:ensure-model"):
+                setup_argos_model(Path("."), model_path=argos_model)
+            with stage(f"build:srt:ru:{a.asset_id}"):
+                srt_ru = paths.tmp / f"{base}.rus.srt"
+                if not srt_ru.exists():
+                    # Translate cue-by-cue to keep timings identical to ES.
+                    from rtve_dl.subs.vtt import Cue
+
+                    out_jsonl = paths.tmp / f"{base}.ru.jsonl"
+                    cue_tasks = [(f"{i}", (c.text or "").strip()) for i, c in enumerate(es_cues)]
+                    translate_es_cues_to_ru_jsonl(Path("."), cues=cue_tasks, out_jsonl=out_jsonl)
+                    ru_map: dict[int, str] = {}
+                    for line in out_jsonl.read_text(encoding="utf-8").splitlines():
+                        if not line.strip():
+                            continue
+                        obj = json.loads(line)
+                        try:
+                            idx = int(obj["id"])
+                        except Exception:
+                            continue
+                        ru_map[idx] = obj.get("ru") or ""
+
+                    ru_lines: list[Cue] = []
+                    for i, c in enumerate(es_cues):
+                        ru_lines.append(Cue(start_ms=c.start_ms, end_ms=c.end_ms, text=ru_map.get(i, "")))
+                    srt_ru.write_text(cues_to_srt(ru_lines), encoding="utf-8")
+                else:
+                    debug(f"cache hit srt: {srt_ru}")
+                subs.append((srt_ru, "rus", "Russian"))
 
         with stage(f"mux:{a.asset_id}"):
             mux_mkv(video_path=mp4_path, out_mkv=out_mkv, subs=subs)

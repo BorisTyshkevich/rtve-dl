@@ -41,6 +41,19 @@ Debug mode (prints stage progress and cache hits):
 rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 --series-slug cuentame --debug
 ```
 
+Russian subtitles (offline):
+
+```bash
+rtve_dl setup-argos
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 --series-slug cuentame --with-ru
+```
+
+Notes:
+
+- `setup-argos` creates a dedicated `.venv_argos/` (Python 3.13) and installs Argos Translate + models.
+- RTVE does not currently publish a direct Argos `es->ru` model in the default index, so we install `es->en` and `en->ru`
+  and let Argos pivot.
+
 Download a whole season:
 
 ```bash
