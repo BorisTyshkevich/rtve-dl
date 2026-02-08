@@ -12,7 +12,7 @@ from rtve_dl.rtve.resolve import RtveResolver
 from rtve_dl.subs.srt import cues_to_srt
 from rtve_dl.subs.vtt import parse_vtt
 from rtve_dl.log import debug, stage
-from rtve_dl.ru import setup_argos_model, translate_es_cues_to_ru_jsonl
+from rtve_dl.ru import setup_argos_model, translate_cues_jsonl
 
 
 def _slugify(s: str) -> str:
@@ -90,6 +90,7 @@ def download_selector(
     quality: str,
     with_ru: bool,
     argos_model: str | None,
+    translate_en_if_missing: bool,
 ) -> int:
     http = HttpClient()
     with stage("catalog"):
@@ -140,6 +141,7 @@ def download_selector(
 
         subs = [(srt_es, "spa", "Spanish")]
 
+        en_cues = None
         if resolved.subtitles_en_vtt:
             with stage(f"download:subs:en:{a.asset_id}"):
                 _download_sub_vtt(http, resolved.subtitles_en_vtt, paths.subs / f"{a.asset_id}.en.vtt")
@@ -153,6 +155,39 @@ def download_selector(
                     else:
                         debug(f"cache hit srt: {srt_en}")
                     subs.append((srt_en, "eng", "English"))
+        elif translate_en_if_missing:
+            # Produce a machine English track only if RTVE did not provide one.
+            with stage("argos:ensure-model"):
+                setup_argos_model(Path("."), model_path=argos_model)
+            with stage(f"build:srt:en_mt:{a.asset_id}"):
+                srt_en = paths.tmp / f"{base}.eng.srt"
+                if not srt_en.exists():
+                    out_jsonl = paths.tmp / f"{base}.en.jsonl"
+                    cue_tasks = [(f"{i}", (c.text or "").strip()) for i, c in enumerate(es_cues)]
+                    translate_cues_jsonl(Path("."), cues=cue_tasks, src="es", dst="en", out_jsonl=out_jsonl)
+                    mt_map: dict[int, str] = {}
+                    for line in out_jsonl.read_text(encoding="utf-8").splitlines():
+                        if not line.strip():
+                            continue
+                        obj = json.loads(line)
+                        try:
+                            idx = int(obj["id"])
+                        except Exception:
+                            continue
+                        mt_map[idx] = obj.get("text") or ""
+                    if len(mt_map) != len(es_cues):
+                        raise SystemExit(
+                            f"Argos EN translation incomplete for asset {a.asset_id}: got {len(mt_map)}/{len(es_cues)} cues"
+                        )
+                    from rtve_dl.subs.vtt import Cue
+
+                    en_cues = [Cue(start_ms=c.start_ms, end_ms=c.end_ms, text=mt_map.get(i, "")) for i, c in enumerate(es_cues)]
+                    srt_en.write_text(cues_to_srt(en_cues), encoding="utf-8")
+                else:
+                    debug(f"cache hit srt: {srt_en}")
+                # If we produced EN cues here, include them.
+                if srt_en.exists():
+                    subs.append((srt_en, "eng", "English"))
 
         if with_ru:
             with stage("argos:ensure-model"):
@@ -163,9 +198,13 @@ def download_selector(
                     # Translate cue-by-cue to keep timings identical to ES.
                     from rtve_dl.subs.vtt import Cue
 
+                    # Prefer translating from RTVE English subtitles if present (en->ru),
+                    # otherwise translate Spanish (es->ru, Argos will pivot if needed).
+                    src_lang = "en" if en_cues is not None else "es"
+                    src_cues = en_cues if en_cues is not None else es_cues
                     out_jsonl = paths.tmp / f"{base}.ru.jsonl"
-                    cue_tasks = [(f"{i}", (c.text or "").strip()) for i, c in enumerate(es_cues)]
-                    translate_es_cues_to_ru_jsonl(Path("."), cues=cue_tasks, out_jsonl=out_jsonl)
+                    cue_tasks = [(f"{i}", (c.text or "").strip()) for i, c in enumerate(src_cues)]
+                    translate_cues_jsonl(Path("."), cues=cue_tasks, src=src_lang, dst="ru", out_jsonl=out_jsonl)
                     ru_map: dict[int, str] = {}
                     for line in out_jsonl.read_text(encoding="utf-8").splitlines():
                         if not line.strip():
@@ -175,10 +214,14 @@ def download_selector(
                             idx = int(obj["id"])
                         except Exception:
                             continue
-                        ru_map[idx] = obj.get("ru") or ""
+                        ru_map[idx] = obj.get("text") or ""
+                    if len(ru_map) != len(src_cues):
+                        raise SystemExit(
+                            f"Argos translation incomplete for asset {a.asset_id}: got {len(ru_map)}/{len(src_cues)} cues"
+                        )
 
                     ru_lines: list[Cue] = []
-                    for i, c in enumerate(es_cues):
+                    for i, c in enumerate(src_cues):
                         ru_lines.append(Cue(start_ms=c.start_ms, end_ms=c.end_ms, text=ru_map.get(i, "")))
                     srt_ru.write_text(cues_to_srt(ru_lines), encoding="utf-8")
                 else:

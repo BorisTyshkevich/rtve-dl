@@ -48,6 +48,13 @@ rtve_dl setup-argos
 rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 --series-slug cuentame --with-ru
 ```
 
+Prefer using RTVE's English subtitles for RU (en->ru). If RTVE has no English subtitles, you can optionally generate an
+English track from Spanish (es->en) and then use that for RU:
+
+```bash
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 --series-slug cuentame --with-ru --translate-en-if-missing
+```
+
 Notes:
 
 - `setup-argos` creates a dedicated `.venv_argos/` (Python 3.13) and installs Argos Translate + models.

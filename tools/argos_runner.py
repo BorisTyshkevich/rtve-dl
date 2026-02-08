@@ -53,12 +53,17 @@ def cmd_setup(model: str | None) -> int:
     return 0
 
 
-def cmd_translate(in_jsonl: str, out_jsonl: str) -> int:
+def cmd_translate(in_jsonl: str, out_jsonl: str, src: str, dst: str) -> int:
     import argostranslate.translate
 
     inp = Path(in_jsonl)
     outp = Path(out_jsonl)
     outp.parent.mkdir(parents=True, exist_ok=True)
+
+    # This returns a reusable translation object; it can be a composite that pivots if needed.
+    tr = argostranslate.translate.get_translation_from_codes(src, dst)
+    if tr is None:
+        raise SystemExit(f"Argos translation unavailable: {src}->{dst} (run setup)")
 
     with inp.open("r", encoding="utf-8") as fin, outp.open("w", encoding="utf-8") as fout:
         for line in fin:
@@ -68,9 +73,11 @@ def cmd_translate(in_jsonl: str, out_jsonl: str) -> int:
             obj = json.loads(line)
             _id = obj["id"]
             text = obj.get("text") or ""
-            # Use Argos pivoting if direct es->ru isn't installed.
-            ru = argostranslate.translate.translate(text, "es", "ru") if text.strip() else ""
-            fout.write(json.dumps({"id": _id, "ru": ru}, ensure_ascii=False) + "\n")
+            if not text.strip():
+                out_text = ""
+            else:
+                out_text = tr.translate(text)
+            fout.write(json.dumps({"id": _id, "text": out_text}, ensure_ascii=False) + "\n")
     return 0
 
 
@@ -84,12 +91,14 @@ def main() -> int:
     p = sub.add_parser("translate")
     p.add_argument("--in-jsonl", required=True)
     p.add_argument("--out-jsonl", required=True)
+    p.add_argument("--from", dest="src", required=True)
+    p.add_argument("--to", dest="dst", required=True)
 
     args = ap.parse_args()
     if args.cmd == "setup":
         return cmd_setup(args.model)
     if args.cmd == "translate":
-        return cmd_translate(args.in_jsonl, args.out_jsonl)
+        return cmd_translate(args.in_jsonl, args.out_jsonl, args.src, args.dst)
     raise SystemExit("unknown command")
 
 

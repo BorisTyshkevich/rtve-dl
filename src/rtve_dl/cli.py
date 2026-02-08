@@ -30,6 +30,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--quality", default="mp4", choices=["mp4", "best"], help="Prefer progressive MP4 or use best-effort")
     p.add_argument("--debug", action="store_true", help="Print progress/stage information")
     p.add_argument("--with-ru", action="store_true", help="Add Russian subtitle track (offline Argos Translate)")
+    p.add_argument(
+        "--translate-en-if-missing",
+        action="store_true",
+        help="If RTVE English subtitles are missing, generate an English track by translating Spanish (offline Argos)",
+    )
     p.add_argument("--argos-model", default=None, help="Optional path to a local .argosmodel file to install (es->ru)")
 
     def _cmd_download(a: argparse.Namespace) -> int:
@@ -41,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
             quality=a.quality,
             with_ru=a.with_ru,
             argos_model=a.argos_model,
+            translate_en_if_missing=a.translate_en_if_missing,
         )
 
     p.set_defaults(func=_cmd_download)

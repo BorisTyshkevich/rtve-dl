@@ -54,8 +54,13 @@ def setup_argos_model(root: Path, *, model_path: str | None) -> None:
         subprocess.check_call(cmd)
 
 
-def translate_es_cues_to_ru_jsonl(
-    root: Path, *, cues: list[tuple[str, str]], out_jsonl: Path
+def translate_cues_jsonl(
+    root: Path,
+    *,
+    cues: list[tuple[str, str]],
+    src: str,
+    dst: str,
+    out_jsonl: Path,
 ) -> None:
     """
     cues: list of (id, text)
@@ -69,8 +74,19 @@ def translate_es_cues_to_ru_jsonl(
         for _id, text in cues:
             f.write(json.dumps({"id": _id, "text": text}, ensure_ascii=False) + "\n")
 
-    cmd = [str(py), str(runner), "translate", "--in-jsonl", str(inp), "--out-jsonl", str(out_jsonl)]
+    cmd = [
+        str(py),
+        str(runner),
+        "translate",
+        "--in-jsonl",
+        str(inp),
+        "--out-jsonl",
+        str(out_jsonl),
+        "--from",
+        src,
+        "--to",
+        dst,
+    ]
     debug("argos translate via: " + " ".join(cmd))
     with stage("argos:translate"):
         subprocess.check_call(cmd)
-
