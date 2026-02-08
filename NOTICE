@@ -1,0 +1,13 @@
+rtve-dl
+Copyright 2026 Contributors
+
+This product includes RTVE link resolution logic inspired by the Descargavideos project:
+- forestrf/Descargavideos (not affiliated with RTVE)
+
+In particular, the approach for extracting media URLs from RTVE "thumbnail" PNG metadata
+and related heuristics were derived from Descargavideos' RTVE handler
+(see their file `secundario/rtve.php` at the time this project was created).
+
+This project does not include any DRM circumvention code. If RTVE marks an asset as DRM-protected,
+rtve-dl will fail the run by default.
+

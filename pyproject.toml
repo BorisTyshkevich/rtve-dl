@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling>=1.21.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rtve-dl"
+version = "0.1.0"
+description = "RTVE.es downloader that produces MKV with Spanish subtitles plus Russian learning subtitles."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Contributors" }]
+dependencies = [
+]
+
+[project.scripts]
+rtve_dl = "rtve_dl.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rtve_dl"]
