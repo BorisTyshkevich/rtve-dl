@@ -10,6 +10,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+from rtve_dl.log import debug
 
 DEFAULT_HEADERS = {
     # RTVE often behaves differently without a browser-ish UA.
@@ -47,6 +48,7 @@ class HttpClient:
         last: HttpResponse | None = None
         for attempt in range(self._retries + 1):
             try:
+                t0 = time.time()
                 with urllib.request.urlopen(req, timeout=self._timeout_s) as r:
                     raw = r.read()
                     headers = dict(r.headers.items())
@@ -61,13 +63,16 @@ class HttpClient:
                             content = zlib.decompress(raw, -zlib.MAX_WBITS)
                     else:
                         content = raw
-                    return HttpResponse(
+                    resp = HttpResponse(
                         url=r.geturl(),
                         status_code=getattr(r, "status", 200),
                         content=content,
                         headers=headers,
                     )
+                    debug(f"http GET {url} -> {resp.status_code} ({time.time() - t0:.2f}s)")
+                    return resp
             except urllib.error.HTTPError as e:
+                debug(f"http GET {url} -> HTTPError {e.code}")
                 last = HttpResponse(
                     url=getattr(e, "url", url),
                     status_code=e.code,

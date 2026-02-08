@@ -35,6 +35,12 @@ Download one episode:
 rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 --series-slug cuentame
 ```
 
+Debug mode (prints stage progress and cache hits):
+
+```bash
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 --series-slug cuentame --debug
+```
+
 Download a whole season:
 
 ```bash
@@ -68,4 +74,3 @@ See `NOTICE`.
 ## Legal
 
 This software is provided "as-is" under the Apache-2.0 license. You are responsible for complying with RTVE terms and any applicable laws.
-
