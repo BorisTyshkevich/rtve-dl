@@ -10,6 +10,10 @@ def set_debug(enabled: bool) -> None:
     _DEBUG = bool(enabled)
 
 
+def is_debug() -> bool:
+    return _DEBUG
+
+
 def debug(msg: str) -> None:
     if _DEBUG:
         print(f"[debug] {msg}")
@@ -36,4 +40,3 @@ class stage:
         else:
             debug(f"stage:fail {self._name}: {exc}")
         return False
-

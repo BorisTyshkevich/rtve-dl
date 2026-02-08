@@ -4,6 +4,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from rtve_dl.log import debug, is_debug
+
 
 def require_ffmpeg() -> None:
     if shutil.which("ffmpeg") is None:
@@ -12,13 +14,21 @@ def require_ffmpeg() -> None:
 
 def run_ffmpeg(args: list[str]) -> None:
     require_ffmpeg()
-    p = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", *args], text=True)
+    base = ["ffmpeg", "-hide_banner", "-nostdin"]
+    if is_debug():
+        # Show progress for long downloads/mux operations.
+        base += ["-loglevel", "warning", "-stats"]
+        debug("ffmpeg " + " ".join(args))
+    else:
+        base += ["-loglevel", "error"]
+    p = subprocess.run([*base, *args], text=True)
     if p.returncode != 0:
         raise RuntimeError(f"ffmpeg failed: {' '.join(args)}")
 
 
 def download_to_mp4(input_url: str, out_mp4: Path, *, headers: dict[str, str] | None = None) -> None:
     out_mp4.parent.mkdir(parents=True, exist_ok=True)
+    debug(f"download_to_mp4: {input_url} -> {out_mp4}")
     args: list[str] = ["-y"]
     if headers:
         # ffmpeg expects CRLF separated headers.
@@ -39,6 +49,7 @@ def mux_mkv(
     subs: list of (path, language, title). Codec will be SRT-in-MKV.
     """
     out_mkv.parent.mkdir(parents=True, exist_ok=True)
+    debug(f"mux_mkv: video={video_path} out={out_mkv} subs={len(subs)}")
     args: list[str] = ["-y", "-i", str(video_path)]
     for p, _lang, _title in subs:
         args += ["-i", str(p)]
