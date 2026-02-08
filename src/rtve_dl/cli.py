@@ -29,11 +29,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--series-slug", default=None, help="Override the series slug used for caching under data/series/")
     p.add_argument("--quality", default="mp4", choices=["mp4", "best"], help="Prefer progressive MP4 or use best-effort")
     p.add_argument("--debug", action="store_true", help="Print progress/stage information")
-    p.add_argument("--with-ru", action="store_true", help="Add Russian subtitle track (offline Argos Translate)")
+    p.add_argument(
+        "--with-ru",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Add Russian subtitle track (offline Argos Translate). Default: enabled.",
+    )
     p.add_argument(
         "--translate-en-if-missing",
-        action="store_true",
-        help="If RTVE English subtitles are missing, generate an English track by translating Spanish (offline Argos)",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="If RTVE English subtitles are missing, generate an English track by translating Spanish (offline Argos). Default: enabled.",
     )
     p.add_argument("--argos-model", default=None, help="Optional path to a local .argosmodel file to install (es->ru)")
 

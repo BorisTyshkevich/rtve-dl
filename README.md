@@ -45,21 +45,27 @@ Russian subtitles (offline):
 
 ```bash
 rtve_dl setup-argos
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 --series-slug cuentame --with-ru
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 --series-slug cuentame
 ```
 
 Prefer using RTVE's English subtitles for RU (en->ru). If RTVE has no English subtitles, you can optionally generate an
 English track from Spanish (es->en) and then use that for RU:
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 --series-slug cuentame --with-ru --translate-en-if-missing
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 --series-slug cuentame --translate-en-if-missing
 ```
+
+Defaults:
+
+- `--with-ru` is enabled by default (use `--no-with-ru` to disable)
+- `--translate-en-if-missing` is enabled by default (use `--no-translate-en-if-missing` to disable)
 
 Notes:
 
 - `setup-argos` creates a dedicated `.venv_argos/` (Python 3.13) and installs Argos Translate + models.
-- RTVE does not currently publish a direct Argos `es->ru` model in the default index, so we install `es->en` and `en->ru`
-  and let Argos pivot.
+  - We use Python 3.13 for `.venv_argos/` because Argos Translate's dependency stack is not reliable on Python 3.14+.
+- Argos does not currently publish a direct `es->ru` model in its default index, so we install `es->en` and `en->ru`
+  and let Argos pivot as needed.
 
 Download a whole season:
 
