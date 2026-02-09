@@ -174,7 +174,7 @@ rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 --s
 
 #### Operational notes
 
-- ASR uses the cached episode MP4 in `data/series/<slug>/tmp/`.
+- ASR uses the cached episode MP4 in `tmp/<slug>/`.
 - Generated Spanish SRT is cached (`*.spa.srt`) and reused on reruns.
 - If you want to force re-transcription, delete only the target `*.spa.srt` and rerun.
 - If `--with-ru` is enabled (default), RU and bilingual tracks are generated from the resulting Spanish cues (RTVE ES or ASR ES).
@@ -223,7 +223,7 @@ We translate **Spanish -> Russian** cue-by-cue using `codex exec` in JSONL chunk
 
 For each episode we create cached files under:
 
-`data/series/<series_slug>/tmp/`
+`tmp/<series_slug>/`
 
 - `SxxExx_<title>.ru.c<chunk>.ru.in.0001.jsonl` ... input chunks
 - `SxxExx_<title>.ru.c<chunk>.ru.out.0001.jsonl` ... output chunks (Codex last message)
@@ -243,7 +243,7 @@ If RTVE doesn't provide English subtitles for an episode and `--translate-en-if-
 
 Everything is cache-based and idempotent. The simplest way to rebuild the final `.mkv` is:
 
-- delete `data/series/<slug>/out/<episode>.mkv`
+- delete `data/<slug>/<episode>.mkv`
 - rerun the same `rtve_dl download ...` command
 
 It will reuse the cached `.mp4` and `.vtt`/`.srt` files unless you delete those too.
@@ -271,14 +271,15 @@ Quality selection:
 Re-running `download` is safe:
 
 - output `.mkv` is skipped if it already exists
-- cached `.mp4` is reused from `data/series/<slug>/tmp/`
-- subtitle `.vtt` files are cached in `data/series/<slug>/subs/` and not re-downloaded
-- ASR-generated Spanish `.srt` files are cached in `data/series/<slug>/tmp/` and reused
+- cached `.mp4` is reused from `tmp/<slug>/`
+- subtitle `.vtt` files are cached in `tmp/<slug>/` and not re-downloaded
+- ASR-generated Spanish `.srt` files are cached in `tmp/<slug>/` and reused
 - RU chunk files (`*.ru.c*.ru.in.*.jsonl`, `*.ru.c*.ru.out.*.jsonl`) and built subtitle tracks (`*.rus.srt`, `*.spa_rus.srt`) are reused when present
 
-Project data is stored under:
+Outputs and caches are stored under:
 
-`data/series/<series_slug>/`
+- `data/<series_slug>/` for final `.mkv`
+- `tmp/<series_slug>/` for cache/log/intermediate files
 
 and is ignored by git via `.gitignore`.
 

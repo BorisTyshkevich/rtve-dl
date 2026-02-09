@@ -55,27 +55,23 @@ def _pick_video_url(urls: list[str], quality: str) -> str:
 @dataclass(frozen=True)
 class SeriesPaths:
     slug: str
-    root: Path
-    tmp: Path
-    subs: Path
     out: Path
+    tmp: Path
 
 
 def _paths_for(series_url: str, series_slug: str | None) -> SeriesPaths:
     slug = series_slug or _slugify(series_url)
-    root = Path("data") / "series" / slug
+    out_root = Path("data") / slug
+    tmp_root = Path("tmp") / slug
     return SeriesPaths(
         slug=slug,
-        root=root,
-        tmp=root / "tmp",
-        subs=root / "subs",
-        out=root / "out",
+        out=out_root,
+        tmp=tmp_root,
     )
 
 
 def _ensure_dirs(p: SeriesPaths) -> None:
     p.tmp.mkdir(parents=True, exist_ok=True)
-    p.subs.mkdir(parents=True, exist_ok=True)
     p.out.mkdir(parents=True, exist_ok=True)
 
 
@@ -146,9 +142,9 @@ def download_selector(
             srt_es = paths.tmp / f"{base}.spa.srt"
             if resolved.subtitles_es_vtt:
                 with stage(f"download:subs:es:{a.asset_id}"):
-                    _download_sub_vtt(http, resolved.subtitles_es_vtt, paths.subs / f"{a.asset_id}.es.vtt")
+                    _download_sub_vtt(http, resolved.subtitles_es_vtt, paths.tmp / f"{a.asset_id}.es.vtt")
                 with stage(f"build:srt:es:{a.asset_id}"):
-                    es_cues = parse_vtt((paths.subs / f"{a.asset_id}.es.vtt").read_text(encoding="utf-8"))
+                    es_cues = parse_vtt((paths.tmp / f"{a.asset_id}.es.vtt").read_text(encoding="utf-8"))
                     if not srt_es.exists():
                         srt_es.write_text(cues_to_srt(es_cues), encoding="utf-8")
                     else:
@@ -186,9 +182,9 @@ def download_selector(
 
             if resolved.subtitles_en_vtt:
                 with stage(f"download:subs:en:{a.asset_id}"):
-                    _download_sub_vtt(http, resolved.subtitles_en_vtt, paths.subs / f"{a.asset_id}.en.vtt")
+                    _download_sub_vtt(http, resolved.subtitles_en_vtt, paths.tmp / f"{a.asset_id}.en.vtt")
                 with stage(f"build:srt:en:{a.asset_id}"):
-                    en_vtt = paths.subs / f"{a.asset_id}.en.vtt"
+                    en_vtt = paths.tmp / f"{a.asset_id}.en.vtt"
                     if en_vtt.exists():
                         en_cues = parse_vtt(en_vtt.read_text(encoding="utf-8"))
                         srt_en = paths.tmp / f"{base}.eng.srt"

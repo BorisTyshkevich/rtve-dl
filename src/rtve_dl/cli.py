@@ -13,7 +13,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("download", help="Download video + ES/EN subtitles and mux MKV")
     p.add_argument("series_url", help="Series page URL, e.g. https://www.rtve.es/play/videos/cuentame-como-paso/")
     p.add_argument("selector", help="T7 for a season, or T7S5 for an episode")
-    p.add_argument("--series-slug", default=None, help="Override the series slug used for caching under data/series/")
+    p.add_argument("--series-slug", default=None, help="Override series slug used in data/<slug>/ and tmp/<slug>/")
     p.add_argument("--quality", default="mp4", choices=["mp4", "best"], help="Prefer progressive MP4 or use best-effort")
     p.add_argument("--debug", action="store_true", help="Print progress/stage information")
     p.add_argument(
