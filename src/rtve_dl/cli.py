@@ -20,7 +20,18 @@ def main(argv: list[str] | None = None) -> int:
         "--asr-if-missing",
         default=True,
         action=argparse.BooleanOptionalAction,
-        help="If RTVE has no ES subtitles, generate ES subtitles with WhisperX. Default: enabled.",
+        help="If RTVE has no ES subtitles, generate ES subtitles with ASR backend. Default: enabled.",
+    )
+    p.add_argument(
+        "--asr-backend",
+        default="mlx",
+        choices=["mlx", "whisperx"],
+        help="ASR backend for missing ES subtitles (default: mlx)",
+    )
+    p.add_argument(
+        "--asr-mlx-model",
+        default="mlx-community/whisper-small",
+        help="MLX Whisper model repo (used when --asr-backend mlx)",
     )
     p.add_argument("--asr-model", default="large-v3", help="WhisperX model for ES subtitle fallback")
     p.add_argument("--asr-device", default="cpu", help="WhisperX device (default: cpu)")
@@ -78,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
             asr_compute_type=a.asr_compute_type,
             asr_batch_size=a.asr_batch_size,
             asr_vad_method=a.asr_vad_method,
+            asr_backend=a.asr_backend,
+            asr_mlx_model=a.asr_mlx_model,
             codex_model=a.codex_model,
             codex_chunk_cues=a.codex_chunk_cues,
         )

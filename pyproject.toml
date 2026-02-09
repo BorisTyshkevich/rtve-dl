@@ -18,8 +18,9 @@ dependencies = [
 # `rtve_dl.rtve.descargavideos_compat`.
 dv = ["cryptography>=41"]
 asr = [
-    "whisperx>=3.1",
+    "mlx-whisper>=0.4",
 ]
+asr-whisperx = ["whisperx>=3.1"]
 
 [project.scripts]
 rtve_dl = "rtve_dl.cli:main"

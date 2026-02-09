@@ -59,7 +59,8 @@ def mux_mkv(
     for i in range(1, 1 + len(subs)):
         args += ["-map", str(i)]
 
-    args += ["-c", "copy", "-c:s", "srt"]
+    # Copy primary A/V streams, re-encode subtitle inputs as SRT-in-MKV.
+    args += ["-c:v", "copy", "-c:a", "copy", "-c:s", "srt"]
 
     # Attach metadata per subtitle stream.
     for idx, (_p, lang, title) in enumerate(subs):

@@ -16,6 +16,7 @@ from rtve_dl.log import debug, stage
 from rtve_dl.codex_ru import translate_es_to_ru_with_codex
 from rtve_dl.codex_en import translate_es_to_en_with_codex
 from rtve_dl.asr_whisperx import transcribe_es_to_srt_with_whisperx
+from rtve_dl.asr_mlx import transcribe_es_to_srt_with_mlx_whisper
 
 
 def _slugify(s: str) -> str:
@@ -100,6 +101,8 @@ def download_selector(
     asr_compute_type: str,
     asr_batch_size: int,
     asr_vad_method: str,
+    asr_backend: str,
+    asr_mlx_model: str,
     codex_model: str | None,
     codex_chunk_cues: int,
 ) -> int:
@@ -157,15 +160,24 @@ def download_selector(
                     )
                 with stage(f"build:srt:es_asr:{a.asset_id}"):
                     if not srt_es.exists():
-                        transcribe_es_to_srt_with_whisperx(
-                            media_path=mp4_path,
-                            out_srt=srt_es,
-                            model=asr_model,
-                            device=asr_device,
-                            compute_type=asr_compute_type,
-                            batch_size=asr_batch_size,
-                            vad_method=asr_vad_method,
-                        )
+                        if asr_backend == "mlx":
+                            transcribe_es_to_srt_with_mlx_whisper(
+                                media_path=mp4_path,
+                                out_srt=srt_es,
+                                model_repo=asr_mlx_model,
+                            )
+                        elif asr_backend == "whisperx":
+                            transcribe_es_to_srt_with_whisperx(
+                                media_path=mp4_path,
+                                out_srt=srt_es,
+                                model=asr_model,
+                                device=asr_device,
+                                compute_type=asr_compute_type,
+                                batch_size=asr_batch_size,
+                                vad_method=asr_vad_method,
+                            )
+                        else:
+                            raise RuntimeError(f"unsupported ASR backend: {asr_backend}")
                     else:
                         debug(f"cache hit srt: {srt_es}")
                     es_cues = parse_srt(srt_es.read_text(encoding="utf-8"))

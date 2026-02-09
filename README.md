@@ -6,7 +6,7 @@ Given a series URL and a selector like `T7S5` (season 7, episode 5) or `T7` (who
 
 - downloads the video (prefers direct progressive MP4 when available)
 - downloads Spanish (`es`) and English (`en`) subtitles when available
-- if Spanish subtitles are missing, WhisperX can generate Spanish subtitles from audio (enabled by default)
+- if Spanish subtitles are missing, an ASR backend can generate Spanish subtitles from audio (enabled by default)
 - if English subtitles are missing, it can translate Spanish -> English via Codex (enabled by default)
 - muxes everything into an `.mkv` with subtitle tracks:
   - Spanish (RTVE)
@@ -26,10 +26,13 @@ The old experimental translation pipeline (lexicon datasets, multiple learning t
 - `ffmpeg` on PATH
 - `codex` CLI on PATH (for Russian subtitles and optional ES->EN fallback)
   - You must be logged in / have credentials configured for non-interactive use.
-- `whisperx` CLI on PATH for ES ASR fallback when RTVE has no subtitles
-  - Install via the `asr` extra (`pip install -e '.[asr]'`) or separately.
+- ASR backend for missing ES subtitles:
+  - default backend: `mlx-whisper` (Apple Silicon friendly)
+  - optional backend: `whisperx`
 
-### Python Compatibility For WhisperX
+### Python Compatibility For ASR Backends
+
+`mlx-whisper` (default backend) works well with Python 3.12/3.13 on Apple Silicon.
 
 WhisperX dependency resolution is currently sensitive to Python version.
 
@@ -60,10 +63,16 @@ Optional (only if you want to use the Descargavideos-compatible crypto helpers i
 pip install -e '.[dv]'
 ```
 
-Optional WhisperX fallback dependencies:
+Optional ASR dependencies (default backend `mlx-whisper`):
 
 ```bash
 pip install -e '.[asr]'
+```
+
+Optional WhisperX backend:
+
+```bash
+pip install -e '.[asr-whisperx]'
 ```
 
 ## Usage
@@ -94,33 +103,30 @@ Defaults:
 - `--require-ru` is enabled by default (use `--no-require-ru` to allow episodes without RU)
 - `--codex-chunk-cues` defaults to `400`
 
-### Spanish ASR fallback (WhisperX)
+### Spanish ASR fallback
 
-If RTVE provides no Spanish subtitles for an episode and `--asr-if-missing` is enabled, the downloader runs WhisperX on the cached MP4 and generates:
+If RTVE provides no Spanish subtitles for an episode and `--asr-if-missing` is enabled, the downloader runs the selected ASR backend on the cached MP4 and generates:
 
 - `SxxExx_<title>.spa.srt` ... Spanish subtitles generated from audio
 
 This fallback is automatic and only triggers when RTVE ES subtitles are missing.
-If RTVE ES subtitles exist, they are used directly and WhisperX is skipped.
+If RTVE ES subtitles exist, they are used directly and ASR is skipped.
 
-Default ASR settings are conservative for compatibility:
+Default ASR settings:
 
-- `--asr-device cpu`
-- `--asr-compute-type float32`
-- `--asr-model large-v3`
-- `--asr-vad-method silero`
+- `--asr-backend mlx`
+- `--asr-mlx-model mlx-community/whisper-small`
 
 Note for Apple Silicon:
 
-- You can try `--asr-device mps --asr-compute-type float16`, but many WhisperX builds
-  still route through faster-whisper/ctranslate2 where `mps` is unsupported.
-- `rtve_dl` now auto-retries with `cpu/float32` if WhisperX returns `unsupported device mps`.
+- `mlx` backend uses Apple MLX stack and is the recommended choice.
+- If you switch to `--asr-backend whisperx`, MPS may be unsupported in your stack; `rtve_dl` auto-retries with CPU.
 
 You can tune performance/quality explicitly:
 
 ```bash
 rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 --series-slug cuentame \
-  --asr-model large-v3 --asr-device cpu --asr-compute-type float32 --asr-vad-method silero --asr-batch-size 8
+  --asr-backend mlx --asr-mlx-model mlx-community/whisper-small
 ```
 
 #### Recommended installation and first run (Apple Silicon)
@@ -139,10 +145,10 @@ pip install -U pip setuptools wheel
 pip install -e '.[asr]'
 ```
 
-3. Validate WhisperX is available:
+3. Validate ASR backend availability:
 
 ```bash
-whisperx --help
+python -c "import mlx_whisper; print('mlx-whisper ok')"
 ```
 
 4. Test ASR-only pipeline on an episode with missing RTVE subtitles (no RU/EN translation):
@@ -152,6 +158,7 @@ rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \
   --series-slug cuentame \
   --debug \
   --no-with-ru \
+  --no-require-ru \
   --no-translate-en-if-missing
 ```
 
@@ -171,7 +178,9 @@ rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 --s
 #### Troubleshooting
 
 - `whisperx: command not found`
-  - Activate the venv where WhisperX is installed, or install with `pip install -e '.[asr]'`.
+  - If using WhisperX backend, install it with `pip install -e '.[asr-whisperx]'`.
+- `mlx_whisper` import errors
+  - Install default ASR backend with `pip install -e '.[asr]'`.
 - `Could not find a version that satisfies ... ctranslate2==...` / Python resolver errors
   - Switch to Python 3.12/3.13 venv and reinstall.
 - `Weights only load failed` / `omegaconf.listconfig.ListConfig` in WhisperX log
@@ -183,11 +192,26 @@ rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 --s
 pip install -U -e '.[asr]'
 ```
 - Slow transcription
-  - Use `--asr-model base` for faster but lower-quality output.
-  - Lower `--asr-batch-size` if memory pressure appears.
+  - For MLX backend, use a smaller model like `--asr-mlx-model mlx-community/whisper-tiny`.
+  - For WhisperX backend, use `--asr-model base` and lower `--asr-batch-size`.
 - MPS/device issues
   - Try `--asr-device cpu --asr-compute-type float32` explicitly.
   - If you requested `mps`, `rtve_dl` will auto-retry CPU when WhisperX reports `unsupported device mps`.
+
+#### Switching to WhisperX backend
+
+If you want WhisperX instead of MLX:
+
+```bash
+pip install -e '.[asr-whisperx]'
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \
+  --series-slug cuentame \
+  --asr-backend whisperx \
+  --asr-model large-v3 \
+  --asr-device cpu \
+  --asr-compute-type float32 \
+  --asr-vad-method silero
+```
 
 ### How RU translation works
 
