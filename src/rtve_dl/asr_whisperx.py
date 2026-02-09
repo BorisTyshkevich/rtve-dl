@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import os
 from pathlib import Path
 
 from rtve_dl.log import debug, stage
@@ -23,6 +24,7 @@ def transcribe_es_to_srt_with_whisperx(
     device: str,
     compute_type: str,
     batch_size: int,
+    vad_method: str,
 ) -> None:
     _require_whisperx()
     out_srt.parent.mkdir(parents=True, exist_ok=True)
@@ -42,6 +44,8 @@ def transcribe_es_to_srt_with_whisperx(
         compute_type,
         "--batch_size",
         str(batch_size),
+        "--vad_method",
+        vad_method,
         "--output_format",
         "srt",
         "--output_dir",
@@ -50,7 +54,10 @@ def transcribe_es_to_srt_with_whisperx(
 
     def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         debug("whisperx " + " ".join(cmd[1:]))
-        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        env = os.environ.copy()
+        # Needed for newer torch defaults when loading pyannote checkpoints in WhisperX.
+        env["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
 
     with stage(f"asr:whisperx:{media_path.name}"):
         p = _run(args)

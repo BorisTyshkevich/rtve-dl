@@ -108,6 +108,7 @@ Default ASR settings are conservative for compatibility:
 - `--asr-device cpu`
 - `--asr-compute-type float32`
 - `--asr-model large-v3`
+- `--asr-vad-method silero`
 
 Note for Apple Silicon:
 
@@ -119,7 +120,7 @@ You can tune performance/quality explicitly:
 
 ```bash
 rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 --series-slug cuentame \
-  --asr-model large-v3 --asr-device cpu --asr-compute-type float32 --asr-batch-size 8
+  --asr-model large-v3 --asr-device cpu --asr-compute-type float32 --asr-vad-method silero --asr-batch-size 8
 ```
 
 #### Recommended installation and first run (Apple Silicon)
@@ -174,15 +175,13 @@ rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 --s
 - `Could not find a version that satisfies ... ctranslate2==...` / Python resolver errors
   - Switch to Python 3.12/3.13 venv and reinstall.
 - `Weights only load failed` / `omegaconf.listconfig.ListConfig` in WhisperX log
-  - This usually means incompatible `torch/torchaudio` (often too new for current WhisperX/pyannote combo).
-  - Reinstall ASR deps in your venv:
+  - Use `--asr-vad-method silero` (now default) to avoid Pyannote model loading path.
+  - `rtve_dl` also runs WhisperX with `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1` automatically.
+  - If you still hit it, reinstall ASR deps in the same venv and rerun:
 
 ```bash
-pip uninstall -y torch torchaudio
 pip install -U -e '.[asr]'
 ```
-
-  - Then rerun the same `rtve_dl download ...` command.
 - Slow transcription
   - Use `--asr-model base` for faster but lower-quality output.
   - Lower `--asr-batch-size` if memory pressure appears.

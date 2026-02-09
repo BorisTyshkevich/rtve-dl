@@ -31,6 +31,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--asr-batch-size", type=int, default=8, help="WhisperX batch size (default: 8)")
     p.add_argument(
+        "--asr-vad-method",
+        default="silero",
+        choices=["silero", "pyannote"],
+        help="WhisperX VAD method (default: silero)",
+    )
+    p.add_argument(
         "--translate-en-if-missing",
         default=True,
         action=argparse.BooleanOptionalAction,
@@ -71,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
             asr_device=a.asr_device,
             asr_compute_type=a.asr_compute_type,
             asr_batch_size=a.asr_batch_size,
+            asr_vad_method=a.asr_vad_method,
             codex_model=a.codex_model,
             codex_chunk_cues=a.codex_chunk_cues,
         )

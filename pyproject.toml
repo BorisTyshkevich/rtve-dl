@@ -19,10 +19,6 @@ dependencies = [
 dv = ["cryptography>=41"]
 asr = [
     "whisperx>=3.1",
-    # WhisperX/pyannote currently break with newer torch defaults (weights_only behavior).
-    # Keep ASR env on a known-good major range.
-    "torch>=2,<2.6",
-    "torchaudio>=2,<2.6",
 ]
 
 [project.scripts]

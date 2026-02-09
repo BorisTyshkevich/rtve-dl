@@ -99,6 +99,7 @@ def download_selector(
     asr_device: str,
     asr_compute_type: str,
     asr_batch_size: int,
+    asr_vad_method: str,
     codex_model: str | None,
     codex_chunk_cues: int,
 ) -> int:
@@ -163,6 +164,7 @@ def download_selector(
                             device=asr_device,
                             compute_type=asr_compute_type,
                             batch_size=asr_batch_size,
+                            vad_method=asr_vad_method,
                         )
                     else:
                         debug(f"cache hit srt: {srt_es}")
