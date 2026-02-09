@@ -29,6 +29,22 @@ The old experimental translation pipeline (lexicon datasets, multiple learning t
 - `whisperx` CLI on PATH for ES ASR fallback when RTVE has no subtitles
   - Install via the `asr` extra (`pip install -e '.[asr]'`) or separately.
 
+### Python Compatibility For WhisperX
+
+WhisperX dependency resolution is currently sensitive to Python version.
+
+- Recommended for ASR fallback: Python `3.12` or `3.13`
+- Not recommended for WhisperX right now: Python `3.14` (common resolver failures around `ctranslate2`/version pins)
+
+If your current venv uses Python 3.14, create a dedicated venv for ASR runs:
+
+```bash
+python3.13 -m venv .venv313
+source .venv313/bin/activate
+pip install -U pip setuptools wheel
+pip install -e '.[asr]'
+```
+
 ## Install (dev)
 
 ```bash
@@ -84,18 +100,95 @@ If RTVE provides no Spanish subtitles for an episode and `--asr-if-missing` is e
 
 - `SxxExx_<title>.spa.srt` ... Spanish subtitles generated from audio
 
-Apple Silicon defaults are preconfigured:
+This fallback is automatic and only triggers when RTVE ES subtitles are missing.
+If RTVE ES subtitles exist, they are used directly and WhisperX is skipped.
 
-- `--asr-device mps`
-- `--asr-compute-type float16`
+Default ASR settings are conservative for compatibility:
+
+- `--asr-device cpu`
+- `--asr-compute-type float32`
 - `--asr-model large-v3`
+
+Note for Apple Silicon:
+
+- You can try `--asr-device mps --asr-compute-type float16`, but many WhisperX builds
+  still route through faster-whisper/ctranslate2 where `mps` is unsupported.
+- `rtve_dl` now auto-retries with `cpu/float32` if WhisperX returns `unsupported device mps`.
 
 You can tune performance/quality explicitly:
 
 ```bash
 rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 --series-slug cuentame \
-  --asr-model large-v3 --asr-device mps --asr-compute-type float16 --asr-batch-size 8
+  --asr-model large-v3 --asr-device cpu --asr-compute-type float32 --asr-batch-size 8
 ```
+
+#### Recommended installation and first run (Apple Silicon)
+
+1. Create and activate a Python 3.13 virtual environment:
+
+```bash
+python3.13 -m venv .venv313
+source .venv313/bin/activate
+```
+
+2. Install the project with ASR extras:
+
+```bash
+pip install -U pip setuptools wheel
+pip install -e '.[asr]'
+```
+
+3. Validate WhisperX is available:
+
+```bash
+whisperx --help
+```
+
+4. Test ASR-only pipeline on an episode with missing RTVE subtitles (no RU/EN translation):
+
+```bash
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \
+  --series-slug cuentame \
+  --debug \
+  --no-with-ru \
+  --no-translate-en-if-missing
+```
+
+5. Run full pipeline after ASR validation:
+
+```bash
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 --series-slug cuentame --debug
+```
+
+#### Operational notes
+
+- ASR uses the cached episode MP4 in `data/series/<slug>/tmp/`.
+- Generated Spanish SRT is cached (`*.spa.srt`) and reused on reruns.
+- If you want to force re-transcription, delete only the target `*.spa.srt` and rerun.
+- If `--with-ru` is enabled (default), RU and bilingual tracks are generated from the resulting Spanish cues (RTVE ES or ASR ES).
+
+#### Troubleshooting
+
+- `whisperx: command not found`
+  - Activate the venv where WhisperX is installed, or install with `pip install -e '.[asr]'`.
+- `Could not find a version that satisfies ... ctranslate2==...` / Python resolver errors
+  - Switch to Python 3.12/3.13 venv and reinstall.
+- `Weights only load failed` / `omegaconf.listconfig.ListConfig` in WhisperX log
+  - This usually means incompatible `torch/torchaudio` (often too new for current WhisperX/pyannote combo).
+  - Reinstall ASR deps in your venv:
+
+```bash
+pip uninstall -y torch torchaudio
+pip install -U -e '.[asr]'
+```
+
+  - Then rerun the same `rtve_dl download ...` command.
+- Slow transcription
+  - Use `--asr-model base` for faster but lower-quality output.
+  - Lower `--asr-batch-size` if memory pressure appears.
+- MPS/device issues
+  - Try `--asr-device cpu --asr-compute-type float32` explicitly.
+  - If you requested `mps`, `rtve_dl` will auto-retry CPU when WhisperX reports `unsupported device mps`.
 
 ### How RU translation works
 

@@ -48,13 +48,36 @@ def transcribe_es_to_srt_with_whisperx(
         str(out_srt.parent),
     ]
 
-    debug("whisperx " + " ".join(args[1:]))
+    def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        debug("whisperx " + " ".join(cmd[1:]))
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
     with stage(f"asr:whisperx:{media_path.name}"):
-        p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        p = _run(args)
         if p.returncode != 0:
-            log_path = Path(str(out_srt) + ".log")
-            log_path.write_text(p.stdout or "", encoding="utf-8", errors="replace")
-            raise RuntimeError(f"whisperx failed (exit {p.returncode}); see {log_path}")
+            out = (p.stdout or "").lower()
+            # WhisperX currently uses faster-whisper/ctranslate2; on many setups MPS is unsupported.
+            # Auto-fallback to CPU for better out-of-the-box reliability.
+            if "unsupported device mps" in out and device.lower() == "mps":
+                debug("whisperx mps unsupported; retrying with cpu/float32")
+                retry = list(args)
+                i_dev = retry.index("--device") + 1
+                i_ct = retry.index("--compute_type") + 1
+                retry[i_dev] = "cpu"
+                retry[i_ct] = "float32"
+                p = _run(retry)
+            if p.returncode != 0:
+                log_path = Path(str(out_srt) + ".log")
+                log_path.write_text(p.stdout or "", encoding="utf-8", errors="replace")
+                out = (p.stdout or "").lower()
+                if "weights only load failed" in out and "omegaconf.listconfig.listconfig" in out:
+                    raise RuntimeError(
+                        "whisperx failed due to incompatible torch/torchaudio versions "
+                        "(common with torch>=2.6). Reinstall ASR deps with "
+                        "`pip install -U -e '.[asr]'` in a Python 3.12/3.13 venv, then retry. "
+                        f"Details: {log_path}"
+                    )
+                raise RuntimeError(f"whisperx failed (exit {p.returncode}); see {log_path}")
 
     produced = out_srt.parent / f"{media_path.stem}.srt"
     if not produced.exists():

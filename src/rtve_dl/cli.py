@@ -23,11 +23,11 @@ def main(argv: list[str] | None = None) -> int:
         help="If RTVE has no ES subtitles, generate ES subtitles with WhisperX. Default: enabled.",
     )
     p.add_argument("--asr-model", default="large-v3", help="WhisperX model for ES subtitle fallback")
-    p.add_argument("--asr-device", default="mps", help="WhisperX device (Apple Silicon: mps)")
+    p.add_argument("--asr-device", default="cpu", help="WhisperX device (default: cpu)")
     p.add_argument(
         "--asr-compute-type",
-        default="float16",
-        help="WhisperX compute type (Apple Silicon recommended: float16)",
+        default="float32",
+        help="WhisperX compute type (default: float32)",
     )
     p.add_argument("--asr-batch-size", type=int, default=8, help="WhisperX batch size (default: 8)")
     p.add_argument(
