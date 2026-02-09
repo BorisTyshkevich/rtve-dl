@@ -72,6 +72,24 @@ def main(argv: list[str] | None = None) -> int:
         default=400,
         help="Chunk size in cues for batch translation (default: 400)",
     )
+    p.add_argument(
+        "--parallel",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Enable parallel pipeline (video/subtitles/translation/mux). Default: enabled.",
+    )
+    p.add_argument(
+        "--jobs-episodes",
+        type=int,
+        default=2,
+        help="Episode-level parallel workers (season mode). Default: 2",
+    )
+    p.add_argument(
+        "--jobs-codex-chunks",
+        type=int,
+        default=4,
+        help="Codex chunk workers per translation task. Default: 4",
+    )
 
     def _cmd_download(a: argparse.Namespace) -> int:
         set_debug(a.debug)
@@ -93,6 +111,9 @@ def main(argv: list[str] | None = None) -> int:
             asr_mlx_model=a.asr_mlx_model,
             codex_model=a.codex_model,
             codex_chunk_cues=a.codex_chunk_cues,
+            parallel=a.parallel,
+            jobs_episodes=a.jobs_episodes,
+            jobs_codex_chunks=a.jobs_codex_chunks,
         )
 
     p.set_defaults(func=_cmd_download)

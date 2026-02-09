@@ -106,6 +106,20 @@ Defaults:
 - `--with-ru` is enabled by default (use `--no-with-ru` to disable)
 - `--require-ru` is enabled by default (use `--no-require-ru` to allow episodes without RU)
 - `--codex-chunk-cues` defaults to `400`
+- `--parallel` is enabled by default
+- `--jobs-episodes` defaults to `2` (season mode)
+- `--jobs-codex-chunks` defaults to `4` (per translation task)
+
+### Parallel pipeline
+
+When `--parallel` is enabled, per episode the downloader runs:
+
+- video download/cache in parallel with Spanish subtitle preparation (RTVE VTT or ASR)
+- once Spanish cues are ready, EN and RU subtitle tasks in parallel
+- Codex chunk translation in parallel per language (`--jobs-codex-chunks`)
+- mux after required inputs are ready
+
+For season selectors (`T7`), episodes are processed concurrently with `--jobs-episodes`.
 
 ### Spanish ASR fallback
 
@@ -254,6 +268,7 @@ For a season selector like `T7`:
 
 - if an episode fails RU generation and `--require-ru` is on, we log an error and continue to the next episode
 - the command exits non-zero if any episode failed
+- EN fallback translation failures are warnings and do not block mux
 
 Download a whole season:
 

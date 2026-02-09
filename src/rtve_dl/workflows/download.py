@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from rtve_dl.ffmpeg import download_to_mp4, mux_mkv
@@ -101,6 +101,9 @@ def download_selector(
     asr_mlx_model: str,
     codex_model: str | None,
     codex_chunk_cues: int,
+    parallel: bool,
+    jobs_episodes: int,
+    jobs_codex_chunks: int,
 ) -> int:
     http = HttpClient()
     with stage("catalog"):
@@ -112,7 +115,7 @@ def download_selector(
     is_season = "S" not in selector.upper()
     failures: list[str] = []
 
-    for a in assets:
+    def _process_one(a: SeriesAsset) -> str | None:
         try:
             with stage(f"resolve:{a.asset_id}"):
                 resolved = resolver.resolve(a.asset_id, ignore_drm=True)
@@ -123,33 +126,35 @@ def download_selector(
             base = f"S{season_num:02d}E{episode_num:02d}_{_slug_title(title)}"
 
             out_mkv = paths.out / f"{base}.mkv"
+            mp4_path = paths.tmp / f"{base}.mp4"
+            srt_es = paths.tmp / f"{base}.spa.srt"
             if out_mkv.exists():
                 debug(f"skip mkv exists: {out_mkv}")
                 print(out_mkv)
-                continue
+                return None
 
-            # Video (cached mp4).
-            video_url = _pick_video_url(resolved.video_urls, quality)
-            mp4_path = paths.tmp / f"{base}.mp4"
-            if not mp4_path.exists():
-                with stage(f"download:video:{a.asset_id}"):
-                    headers = {"Referer": "https://www.rtve.es/"}
-                    download_to_mp4(video_url, mp4_path, headers=headers)
-            else:
-                debug(f"cache hit mp4: {mp4_path}")
+            # Video + ES subtitles are independent, so run in parallel.
+            def _task_video() -> None:
+                video_url = _pick_video_url(resolved.video_urls, quality)
+                if not mp4_path.exists():
+                    with stage(f"download:video:{a.asset_id}"):
+                        headers = {"Referer": "https://www.rtve.es/"}
+                        download_to_mp4(video_url, mp4_path, headers=headers)
+                else:
+                    debug(f"cache hit mp4: {mp4_path}")
 
-            # Subtitles: RTVE ES VTT when present, otherwise WhisperX fallback.
-            srt_es = paths.tmp / f"{base}.spa.srt"
-            if resolved.subtitles_es_vtt:
-                with stage(f"download:subs:es:{a.asset_id}"):
-                    _download_sub_vtt(http, resolved.subtitles_es_vtt, paths.tmp / f"{a.asset_id}.es.vtt")
-                with stage(f"build:srt:es:{a.asset_id}"):
-                    es_cues = parse_vtt((paths.tmp / f"{a.asset_id}.es.vtt").read_text(encoding="utf-8"))
-                    if not srt_es.exists():
-                        srt_es.write_text(cues_to_srt(es_cues), encoding="utf-8")
-                    else:
-                        debug(f"cache hit srt: {srt_es}")
-            else:
+            def _task_es() -> list:
+                if resolved.subtitles_es_vtt:
+                    with stage(f"download:subs:es:{a.asset_id}"):
+                        _download_sub_vtt(http, resolved.subtitles_es_vtt, paths.tmp / f"{a.asset_id}.es.vtt")
+                    with stage(f"build:srt:es:{a.asset_id}"):
+                        es_cues_local = parse_vtt((paths.tmp / f"{a.asset_id}.es.vtt").read_text(encoding="utf-8"))
+                        if not srt_es.exists():
+                            srt_es.write_text(cues_to_srt(es_cues_local), encoding="utf-8")
+                        else:
+                            debug(f"cache hit srt: {srt_es}")
+                    return es_cues_local
+
                 if not asr_if_missing:
                     raise RuntimeError(
                         f"missing Spanish subtitles for asset {a.asset_id}; enable fallback with --asr-if-missing"
@@ -176,33 +181,42 @@ def download_selector(
                             raise RuntimeError(f"unsupported ASR backend: {asr_backend}")
                     else:
                         debug(f"cache hit srt: {srt_es}")
-                    es_cues = parse_srt(srt_es.read_text(encoding="utf-8"))
+                    return parse_srt(srt_es.read_text(encoding="utf-8"))
+
+            if parallel:
+                with ThreadPoolExecutor(max_workers=2) as ep_pool:
+                    fut_video = ep_pool.submit(_task_video)
+                    fut_es = ep_pool.submit(_task_es)
+                    es_cues = fut_es.result()
+                    fut_video.result()
+            else:
+                _task_video()
+                es_cues = _task_es()
 
             subs = [(srt_es, "spa", "Spanish")]
 
-            if resolved.subtitles_en_vtt:
-                with stage(f"download:subs:en:{a.asset_id}"):
-                    _download_sub_vtt(http, resolved.subtitles_en_vtt, paths.tmp / f"{a.asset_id}.en.vtt")
-                with stage(f"build:srt:en:{a.asset_id}"):
-                    en_vtt = paths.tmp / f"{a.asset_id}.en.vtt"
-                    if en_vtt.exists():
+            def _task_en() -> tuple[Path, str, str] | None:
+                if resolved.subtitles_en_vtt:
+                    with stage(f"download:subs:en:{a.asset_id}"):
+                        _download_sub_vtt(http, resolved.subtitles_en_vtt, paths.tmp / f"{a.asset_id}.en.vtt")
+                    with stage(f"build:srt:en:{a.asset_id}"):
+                        en_vtt = paths.tmp / f"{a.asset_id}.en.vtt"
                         en_cues = parse_vtt(en_vtt.read_text(encoding="utf-8"))
                         srt_en = paths.tmp / f"{base}.eng.srt"
                         if not srt_en.exists():
                             srt_en.write_text(cues_to_srt(en_cues), encoding="utf-8")
                         else:
                             debug(f"cache hit srt: {srt_en}")
-                        subs.append((srt_en, "eng", "English"))
-            elif translate_en_if_missing:
-                # Fallback: machine-translate ES -> EN using the same Codex pipeline.
+                        return (srt_en, "eng", "English")
+
+                if not translate_en_if_missing:
+                    return None
+
+                # Fallback: machine-translate ES -> EN using Codex chunks.
                 with stage(f"build:srt:en_mt:{a.asset_id}"):
                     srt_en = paths.tmp / f"{base}.eng.srt"
                     if not srt_en.exists():
-                        cue_tasks: list[tuple[str, str]] = []
-                        for i, c in enumerate(es_cues):
-                            t = (c.text or "").strip()
-                            if t:
-                                cue_tasks.append((f"{i}", t))
+                        cue_tasks = [(f"{i}", (c.text or "").strip()) for i, c in enumerate(es_cues) if (c.text or "").strip()]
                         base_path = paths.tmp / f"{base}.en"
                         en_map = (
                             translate_es_to_en_with_codex(
@@ -211,6 +225,7 @@ def download_selector(
                                 chunk_size_cues=codex_chunk_cues,
                                 model=codex_model,
                                 resume=True,
+                                max_workers=jobs_codex_chunks,
                             )
                             if cue_tasks
                             else {}
@@ -225,22 +240,19 @@ def download_selector(
                         srt_en.write_text(cues_to_srt(en_cues), encoding="utf-8")
                     else:
                         debug(f"cache hit srt: {srt_en}")
-                    subs.append((srt_en, "eng", "English (MT)"))
+                    return (srt_en, "eng", "English (MT)")
 
-            if with_ru:
+            def _task_ru() -> list[tuple[Path, str, str]]:
+                if not with_ru:
+                    if require_ru:
+                        raise RuntimeError("RU subtitles are required but disabled (--no-with-ru)")
+                    return []
                 with stage(f"build:srt:ru:{a.asset_id}"):
                     srt_ru = paths.tmp / f"{base}.rus.srt"
                     srt_bi = paths.tmp / f"{base}.spa_rus.srt"
                     if not srt_ru.exists() or not srt_bi.exists():
-                        # Skip empty cues: the translator may legitimately omit them, and they
-                        # don't add value in the RU track anyway.
-                        cue_tasks: list[tuple[str, str]] = []
-                        for i, c in enumerate(es_cues):
-                            t = (c.text or "").strip()
-                            if t:
-                                cue_tasks.append((f"{i}", t))
-
-                        base_path = paths.tmp / f"{base}.ru"  # used to derive chunk names
+                        cue_tasks = [(f"{i}", (c.text or "").strip()) for i, c in enumerate(es_cues) if (c.text or "").strip()]
+                        base_path = paths.tmp / f"{base}.ru"
                         ru_map = (
                             translate_es_to_ru_with_codex(
                                 cues=cue_tasks,
@@ -248,6 +260,7 @@ def download_selector(
                                 chunk_size_cues=codex_chunk_cues,
                                 model=codex_model,
                                 resume=True,
+                                max_workers=jobs_codex_chunks,
                             )
                             if cue_tasks
                             else {}
@@ -274,23 +287,55 @@ def download_selector(
                     else:
                         debug(f"cache hit srt: {srt_ru}")
                         debug(f"cache hit srt: {srt_bi}")
+                    return [(srt_ru, "rus", "Russian"), (srt_bi, "rus", "Spanish|Russian")]
 
-                    subs.append((srt_ru, "rus", "Russian"))
-                    subs.append((srt_bi, "rus", "Spanish|Russian"))
+            if parallel:
+                with ThreadPoolExecutor(max_workers=2) as tr_pool:
+                    fut_ru = tr_pool.submit(_task_ru)
+                    fut_en = tr_pool.submit(_task_en)
+                    try:
+                        en_track = fut_en.result()
+                        if en_track is not None:
+                            subs.append(en_track)
+                    except Exception as e:
+                        # EN fallback errors should not fail episode.
+                        print(f"[warn] {a.asset_id}: EN subtitle fallback failed: {e}")
+                    ru_tracks = fut_ru.result()
+                    subs.extend(ru_tracks)
             else:
-                if require_ru:
-                    raise RuntimeError("RU subtitles are required but disabled (--no-with-ru)")
+                try:
+                    en_track = _task_en()
+                    if en_track is not None:
+                        subs.append(en_track)
+                except Exception as e:
+                    print(f"[warn] {a.asset_id}: EN subtitle fallback failed: {e}")
+                subs.extend(_task_ru())
 
             with stage(f"mux:{a.asset_id}"):
-                mux_mkv(video_path=mp4_path, out_mkv=out_mkv, subs=subs)
+                tmp_out = Path(str(out_mkv) + ".partial.mkv")
+                mux_mkv(video_path=mp4_path, out_mkv=tmp_out, subs=subs)
+                tmp_out.replace(out_mkv)
             print(out_mkv)
+            return None
         except Exception as e:
             msg = f"{a.asset_id}: {e}"
-            failures.append(msg)
             print(f"[error] {msg}")
             if not is_season:
                 raise
-            # Continue to next episode in season mode.
-            continue
+            return msg
+
+    if parallel and len(assets) > 1:
+        workers = max(1, jobs_episodes)
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_process_one, a): a.asset_id for a in assets}
+            for fut in as_completed(futs):
+                err = fut.result()
+                if err:
+                    failures.append(err)
+    else:
+        for a in assets:
+            err = _process_one(a)
+            if err:
+                failures.append(err)
 
     return 1 if failures else 0
