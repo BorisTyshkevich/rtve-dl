@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import threading
+import time
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -114,9 +116,20 @@ def download_selector(
     resolver = RtveResolver(http)
     is_season = "S" not in selector.upper()
     failures: list[str] = []
+    progress_lock = threading.Lock()
+
+    def _ep_log(tag: str, state: str) -> None:
+        if not parallel:
+            return
+        with progress_lock:
+            debug(f"ep:{tag} {state}")
 
     def _process_one(a: SeriesAsset) -> str | None:
+        t0 = time.time()
+        ep_tag = a.asset_id
         try:
+            _ep_log(ep_tag, "start")
+            _ep_log(ep_tag, "resolve")
             with stage(f"resolve:{a.asset_id}"):
                 resolved = resolver.resolve(a.asset_id, ignore_drm=True)
 
@@ -124,12 +137,15 @@ def download_selector(
             season_num = a.season or 0
             episode_num = a.episode or 0
             base = f"S{season_num:02d}E{episode_num:02d}_{_slug_title(title)}"
+            ep_tag = base
+            _ep_log(ep_tag, "resolved")
 
             out_mkv = paths.out / f"{base}.mkv"
             mp4_path = paths.tmp / f"{base}.mp4"
             srt_es = paths.tmp / f"{base}.spa.srt"
             if out_mkv.exists():
                 debug(f"skip mkv exists: {out_mkv}")
+                _ep_log(ep_tag, "done (cached mkv)")
                 print(out_mkv)
                 return None
 
@@ -183,6 +199,7 @@ def download_selector(
                         debug(f"cache hit srt: {srt_es}")
                     return parse_srt(srt_es.read_text(encoding="utf-8"))
 
+            _ep_log(ep_tag, "video+es")
             if parallel:
                 with ThreadPoolExecutor(max_workers=2) as ep_pool:
                     fut_video = ep_pool.submit(_task_video)
@@ -289,6 +306,7 @@ def download_selector(
                         debug(f"cache hit srt: {srt_bi}")
                     return [(srt_ru, "rus", "Russian"), (srt_bi, "rus", "Spanish|Russian")]
 
+            _ep_log(ep_tag, "translations")
             if parallel:
                 with ThreadPoolExecutor(max_workers=2) as tr_pool:
                     fut_ru = tr_pool.submit(_task_ru)
@@ -311,14 +329,17 @@ def download_selector(
                     print(f"[warn] {a.asset_id}: EN subtitle fallback failed: {e}")
                 subs.extend(_task_ru())
 
+            _ep_log(ep_tag, "mux")
             with stage(f"mux:{a.asset_id}"):
                 tmp_out = Path(str(out_mkv) + ".partial.mkv")
                 mux_mkv(video_path=mp4_path, out_mkv=tmp_out, subs=subs)
                 tmp_out.replace(out_mkv)
+            _ep_log(ep_tag, f"done ({time.time() - t0:.1f}s)")
             print(out_mkv)
             return None
         except Exception as e:
             msg = f"{a.asset_id}: {e}"
+            _ep_log(ep_tag, f"fail ({time.time() - t0:.1f}s)")
             print(f"[error] {msg}")
             if not is_season:
                 raise
@@ -327,7 +348,10 @@ def download_selector(
     if parallel and len(assets) > 1:
         workers = max(1, jobs_episodes)
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            futs = {ex.submit(_process_one, a): a.asset_id for a in assets}
+            futs = {}
+            for a in assets:
+                _ep_log(a.asset_id, "queued")
+                futs[ex.submit(_process_one, a)] = a.asset_id
             for fut in as_completed(futs):
                 err = fut.result()
                 if err:

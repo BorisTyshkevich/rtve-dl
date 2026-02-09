@@ -93,6 +93,10 @@ Debug mode (prints stage progress and cache hits):
 rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 --series-slug cuentame --debug
 ```
 
+In parallel mode, `--debug` also prints compact per-episode state lines:
+
+- `ep:<episode_or_asset> queued|start|resolve|resolved|video+es|translations|mux|done|fail`
+
 Tune Codex chunk size (smaller chunks are slower but more robust; larger chunks mean fewer Codex calls):
 
 ```bash
