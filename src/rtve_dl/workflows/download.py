@@ -199,17 +199,6 @@ def download_selector(
                         debug(f"cache hit srt: {srt_es}")
                     return parse_srt(srt_es.read_text(encoding="utf-8"))
 
-            _ep_log(ep_tag, "video+es")
-            if parallel:
-                with ThreadPoolExecutor(max_workers=2) as ep_pool:
-                    fut_video = ep_pool.submit(_task_video)
-                    fut_es = ep_pool.submit(_task_es)
-                    es_cues = fut_es.result()
-                    fut_video.result()
-            else:
-                _task_video()
-                es_cues = _task_es()
-
             subs = [(srt_es, "spa", "Spanish")]
 
             def _task_en() -> tuple[Path, str, str] | None:
@@ -306,21 +295,29 @@ def download_selector(
                         debug(f"cache hit srt: {srt_bi}")
                     return [(srt_ru, "rus", "Russian"), (srt_bi, "rus", "Spanish|Russian")]
 
-            _ep_log(ep_tag, "translations")
+            _ep_log(ep_tag, "video+es")
             if parallel:
-                with ThreadPoolExecutor(max_workers=2) as tr_pool:
-                    fut_ru = tr_pool.submit(_task_ru)
-                    fut_en = tr_pool.submit(_task_en)
-                    try:
-                        en_track = fut_en.result()
-                        if en_track is not None:
-                            subs.append(en_track)
-                    except Exception as e:
-                        # EN fallback errors should not fail episode.
-                        print(f"[warn] {a.asset_id}: EN subtitle fallback failed: {e}")
-                    ru_tracks = fut_ru.result()
-                    subs.extend(ru_tracks)
+                with ThreadPoolExecutor(max_workers=1) as video_pool:
+                    video_future = video_pool.submit(_task_video)
+                    es_cues = _task_es()
+                    _ep_log(ep_tag, "translations")
+                    with ThreadPoolExecutor(max_workers=2) as tr_pool:
+                        fut_ru = tr_pool.submit(_task_ru)
+                        fut_en = tr_pool.submit(_task_en)
+                        try:
+                            en_track = fut_en.result()
+                            if en_track is not None:
+                                subs.append(en_track)
+                        except Exception as e:
+                            # EN fallback errors should not fail episode.
+                            print(f"[warn] {a.asset_id}: EN subtitle fallback failed: {e}")
+                        ru_tracks = fut_ru.result()
+                        subs.extend(ru_tracks)
+                    video_future.result()
             else:
+                _task_video()
+                es_cues = _task_es()
+                _ep_log(ep_tag, "translations")
                 try:
                     en_track = _task_en()
                     if en_track is not None:
