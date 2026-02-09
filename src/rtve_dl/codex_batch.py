@@ -115,6 +115,20 @@ def run_codex_chunk(*, chunk: CodexChunkPaths, model: str | None, target_languag
         if res.returncode != 0:
             log_path = Path(str(chunk.out_jsonl) + ".log")
             log_path.write_text(res.stdout or "", encoding="utf-8", errors="replace")
+            # Avoid leaving a 0-byte "cache hit" file behind.
+            try:
+                if chunk.out_jsonl.exists() and chunk.out_jsonl.stat().st_size == 0:
+                    chunk.out_jsonl.unlink()
+            except OSError:
+                pass
+
+            out = (res.stdout or "").lower()
+            if "401 unauthorized" in out or "provided authentication token is expired" in out or "refresh_token_reused" in out:
+                raise RuntimeError(
+                    "codex exec failed due to expired/invalid auth. "
+                    "Run `codex logout` then `codex login --device-auth` (or `printenv OPENAI_API_KEY | codex login --with-api-key`) "
+                    f"and retry. Details: {log_path}"
+                )
             raise RuntimeError(f"codex exec failed (exit {res.returncode}); see {log_path}")
 
 
@@ -135,7 +149,8 @@ def translate_es_with_codex(
 
     # Run missing chunks.
     for ch in chunks:
-        if resume and ch.out_jsonl.exists():
+        # Treat 0-byte outputs as invalid; they can be left behind by failed runs.
+        if resume and ch.out_jsonl.exists() and ch.out_jsonl.stat().st_size > 0:
             continue
         run_codex_chunk(chunk=ch, model=model, target_language=target_language)
 
@@ -169,4 +184,3 @@ def translate_es_with_codex(
     if missing:
         raise RuntimeError(f"codex output missing {len(missing)} ids after retries (example: {missing[:5]})")
     return merged
-
