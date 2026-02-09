@@ -12,6 +12,7 @@ def translate_es_to_ru_with_codex(
     chunk_size_cues: int,
     model: str | None,
     resume: bool,
+    max_workers: int,
 ) -> dict[str, str]:
     """
     Spanish -> Russian batch translation via `codex exec` JSONL chunks.
@@ -25,5 +26,5 @@ def translate_es_to_ru_with_codex(
         resume=resume,
         target_language="Russian",
         io_tag="ru",
+        max_workers=max_workers,
     )
-

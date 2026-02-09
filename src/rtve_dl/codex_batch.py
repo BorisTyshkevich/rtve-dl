@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -129,7 +130,56 @@ def run_codex_chunk(*, chunk: CodexChunkPaths, model: str | None, target_languag
                     "Run `codex logout` then `codex login --device-auth` (or `printenv OPENAI_API_KEY | codex login --with-api-key`) "
                     f"and retry. Details: {log_path}"
                 )
+            if "429" in out or "rate limit" in out or "too many requests" in out:
+                raise RuntimeError(f"codex rate limited; see {log_path}")
             raise RuntimeError(f"codex exec failed (exit {res.returncode}); see {log_path}")
+
+
+def _run_codex_chunks(
+    *,
+    chunks: list[CodexChunkPaths],
+    model: str | None,
+    target_language: str,
+    max_workers: int,
+) -> None:
+    if not chunks:
+        return
+
+    workers = max(1, max_workers)
+    pending = list(chunks)
+    while pending:
+        if workers == 1 or len(pending) == 1:
+            for ch in pending:
+                run_codex_chunk(chunk=ch, model=model, target_language=target_language)
+            return
+
+        failed: list[tuple[CodexChunkPaths, Exception]] = []
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            fut_map = {
+                ex.submit(run_codex_chunk, chunk=ch, model=model, target_language=target_language): ch
+                for ch in pending
+            }
+            for fut in as_completed(fut_map):
+                ch = fut_map[fut]
+                try:
+                    fut.result()
+                except Exception as e:
+                    failed.append((ch, e if isinstance(e, Exception) else RuntimeError(str(e))))
+
+        if not failed:
+            return
+
+        rate_limited = any("rate limited" in str(err).lower() for _, err in failed)
+        if rate_limited and workers > 2:
+            workers = 2
+            pending = [ch for ch, _ in failed]
+            debug(
+                f"codex:{target_language.lower()}: backing off parallel chunks to workers=2 "
+                f"after rate limit; retrying {len(pending)} chunk(s)"
+            )
+            continue
+
+        raise failed[0][1]
 
 
 def translate_es_with_codex(
@@ -141,6 +191,7 @@ def translate_es_with_codex(
     resume: bool,
     target_language: str,
     io_tag: str,
+    max_workers: int,
 ) -> dict[str, str]:
     """
     Returns id->translated_text map for all cues provided.
@@ -148,11 +199,18 @@ def translate_es_with_codex(
     chunks = chunk_cues(cues, chunk_cues=chunk_size_cues, base_path=base_path, io_tag=io_tag)
 
     # Run missing chunks.
+    pending: list[CodexChunkPaths] = []
     for ch in chunks:
         # Treat 0-byte outputs as invalid; they can be left behind by failed runs.
         if resume and ch.out_jsonl.exists() and ch.out_jsonl.stat().st_size > 0:
             continue
-        run_codex_chunk(chunk=ch, model=model, target_language=target_language)
+        pending.append(ch)
+    _run_codex_chunks(
+        chunks=pending,
+        model=model,
+        target_language=target_language,
+        max_workers=max_workers,
+    )
 
     # Merge.
     merged: dict[str, str] = {}
@@ -174,8 +232,12 @@ def translate_es_with_codex(
             missing_cues = [(i, t) for i, t in cues if i in missing_set]
             retry_base = Path(str(base_path) + f".retry{attempt}")
             retry_chunks = chunk_cues(missing_cues, chunk_cues=sz, base_path=retry_base, io_tag=io_tag)
-            for ch in retry_chunks:
-                run_codex_chunk(chunk=ch, model=model, target_language=target_language)
+            _run_codex_chunks(
+                chunks=retry_chunks,
+                model=model,
+                target_language=target_language,
+                max_workers=max_workers,
+            )
             for ch in retry_chunks:
                 merged.update(_parse_jsonl_map(ch.out_jsonl))
             missing = sorted(list(want - set(merged.keys())))

@@ -12,6 +12,7 @@ def translate_es_to_en_with_codex(
     chunk_size_cues: int,
     model: str | None,
     resume: bool,
+    max_workers: int,
 ) -> dict[str, str]:
     """
     Spanish -> English batch translation via `codex exec` JSONL chunks.
@@ -25,5 +26,5 @@ def translate_es_to_en_with_codex(
         resume=resume,
         target_language="English",
         io_tag="en",
+        max_workers=max_workers,
     )
-
