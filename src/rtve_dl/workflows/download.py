@@ -14,7 +14,7 @@ from rtve_dl.rtve.resolve import RtveResolver
 from rtve_dl.subs.srt import cues_to_srt
 from rtve_dl.subs.srt_parse import parse_srt
 from rtve_dl.subs.vtt import parse_vtt
-from rtve_dl.log import debug, stage
+from rtve_dl.log import debug, error, stage
 from rtve_dl.codex_ru import translate_es_to_ru_with_codex
 from rtve_dl.codex_en import translate_es_to_en_with_codex
 from rtve_dl.asr_whisperx import transcribe_es_to_srt_with_whisperx
@@ -310,7 +310,7 @@ def download_selector(
                                 subs.append(en_track)
                         except Exception as e:
                             # EN fallback errors should not fail episode.
-                            print(f"[warn] {a.asset_id}: EN subtitle fallback failed: {e}")
+                            error(f"{a.asset_id}: EN subtitle fallback failed (continuing): {e}")
                         ru_tracks = fut_ru.result()
                         subs.extend(ru_tracks)
                     video_future.result()
@@ -323,7 +323,7 @@ def download_selector(
                     if en_track is not None:
                         subs.append(en_track)
                 except Exception as e:
-                    print(f"[warn] {a.asset_id}: EN subtitle fallback failed: {e}")
+                    error(f"{a.asset_id}: EN subtitle fallback failed (continuing): {e}")
                 subs.extend(_task_ru())
 
             _ep_log(ep_tag, "mux")
@@ -337,7 +337,7 @@ def download_selector(
         except Exception as e:
             msg = f"{a.asset_id}: {e}"
             _ep_log(ep_tag, f"fail ({time.time() - t0:.1f}s)")
-            print(f"[error] {msg}")
+            error(msg)
             if not is_season:
                 raise
             return msg
