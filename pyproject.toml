@@ -14,12 +14,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Optional offline Russian subtitle translation.
-# Note: Argos Translate currently has issues on Python 3.14+ due to upstream deps.
-# This project uses a separate Python 3.13 venv for Argos when needed.
-argos = [
-  "argostranslate>=1.9.6",
-]
+# Only needed if you want to use the Descargavideos-compatible Blowfish helpers in
+# `rtve_dl.rtve.descargavideos_compat`.
+dv = ["cryptography>=41"]
 
 [project.scripts]
 rtve_dl = "rtve_dl.cli:main"
