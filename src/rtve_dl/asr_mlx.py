@@ -31,21 +31,37 @@ def transcribe_es_to_srt_with_mlx_whisper(
         ) from e
 
     out_srt.parent.mkdir(parents=True, exist_ok=True)
-    debug(f"mlx_whisper transcribe media={media_path} model={model_repo}")
+    model_candidates = [model_repo]
+    # Some environments fail to resolve whisper-small from HF; fallback keeps
+    # season runs moving without user intervention.
+    if model_repo == "mlx-community/whisper-small":
+        model_candidates.append("mlx-community/whisper-tiny")
 
-    with stage(f"asr:mlx:{media_path.name}"):
-        result = mlx_whisper.transcribe(
-            str(media_path),
-            path_or_hf_repo=model_repo,
-            task="transcribe",
-            language="es",
-            word_timestamps=False,
-            verbose=False,
-        )
+    result = None
+    last_err: Exception | None = None
+    for candidate in model_candidates:
+        debug(f"mlx_whisper transcribe media={media_path} model={candidate}")
+        try:
+            with stage(f"asr:mlx:{media_path.name}"):
+                result = mlx_whisper.transcribe(
+                    str(media_path),
+                    path_or_hf_repo=candidate,
+                    task="transcribe",
+                    language="es",
+                    word_timestamps=False,
+                    verbose=False,
+                )
+            break
+        except Exception as e:
+            last_err = e if isinstance(e, Exception) else RuntimeError(str(e))
+            if candidate != model_candidates[-1]:
+                debug(f"mlx_whisper model failed ({candidate}), trying fallback")
+            else:
+                raise
 
     segments = result.get("segments", []) if isinstance(result, dict) else []
     if not isinstance(segments, list) or not segments:
-        raise RuntimeError("mlx-whisper returned no segments")
+        raise RuntimeError("mlx-whisper returned no segments") from last_err
 
     with out_srt.open("w", encoding="utf-8") as f:
         for i, seg in enumerate(segments, start=1):
