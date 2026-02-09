@@ -6,6 +6,7 @@ Given a series URL and a selector like `T7S5` (season 7, episode 5) or `T7` (who
 
 - downloads the video (prefers direct progressive MP4 when available)
 - downloads Spanish (`es`) and English (`en`) subtitles when available
+- if Spanish subtitles are missing, WhisperX can generate Spanish subtitles from audio (enabled by default)
 - if English subtitles are missing, it can translate Spanish -> English via Codex (enabled by default)
 - muxes everything into an `.mkv` with subtitle tracks:
   - Spanish (RTVE)
@@ -25,6 +26,8 @@ The old experimental translation pipeline (lexicon datasets, multiple learning t
 - `ffmpeg` on PATH
 - `codex` CLI on PATH (for Russian subtitles and optional ES->EN fallback)
   - You must be logged in / have credentials configured for non-interactive use.
+- `whisperx` CLI on PATH for ES ASR fallback when RTVE has no subtitles
+  - Install via the `asr` extra (`pip install -e '.[asr]'`) or separately.
 
 ## Install (dev)
 
@@ -39,6 +42,12 @@ Optional (only if you want to use the Descargavideos-compatible crypto helpers i
 
 ```bash
 pip install -e '.[dv]'
+```
+
+Optional WhisperX fallback dependencies:
+
+```bash
+pip install -e '.[asr]'
 ```
 
 ## Usage
@@ -63,10 +72,30 @@ rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 --se
 
 Defaults:
 
+- `--asr-if-missing` is enabled by default (use `--no-asr-if-missing` to disable)
 - `--translate-en-if-missing` is enabled by default (use `--no-translate-en-if-missing` to disable)
 - `--with-ru` is enabled by default (use `--no-with-ru` to disable)
 - `--require-ru` is enabled by default (use `--no-require-ru` to allow episodes without RU)
 - `--codex-chunk-cues` defaults to `400`
+
+### Spanish ASR fallback (WhisperX)
+
+If RTVE provides no Spanish subtitles for an episode and `--asr-if-missing` is enabled, the downloader runs WhisperX on the cached MP4 and generates:
+
+- `SxxExx_<title>.spa.srt` ... Spanish subtitles generated from audio
+
+Apple Silicon defaults are preconfigured:
+
+- `--asr-device mps`
+- `--asr-compute-type float16`
+- `--asr-model large-v3`
+
+You can tune performance/quality explicitly:
+
+```bash
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 --series-slug cuentame \
+  --asr-model large-v3 --asr-device mps --asr-compute-type float16 --asr-batch-size 8
+```
 
 ### How RU translation works
 
@@ -124,6 +153,7 @@ Re-running `download` is safe:
 - output `.mkv` is skipped if it already exists
 - cached `.mp4` is reused from `data/series/<slug>/tmp/`
 - subtitle `.vtt` files are cached in `data/series/<slug>/subs/` and not re-downloaded
+- ASR-generated Spanish `.srt` files are cached in `data/series/<slug>/tmp/` and reused
 - RU chunk files (`*.ru.c*.ru.in.*.jsonl`, `*.ru.c*.ru.out.*.jsonl`) and built subtitle tracks (`*.rus.srt`, `*.spa_rus.srt`) are reused when present
 
 Project data is stored under:

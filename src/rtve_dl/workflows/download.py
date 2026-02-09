@@ -10,10 +10,12 @@ from rtve_dl.http import HttpClient
 from rtve_dl.rtve.catalog import SeriesAsset, list_assets_for_selector
 from rtve_dl.rtve.resolve import RtveResolver
 from rtve_dl.subs.srt import cues_to_srt
+from rtve_dl.subs.srt_parse import parse_srt
 from rtve_dl.subs.vtt import parse_vtt
 from rtve_dl.log import debug, stage
 from rtve_dl.codex_ru import translate_es_to_ru_with_codex
 from rtve_dl.codex_en import translate_es_to_en_with_codex
+from rtve_dl.asr_whisperx import transcribe_es_to_srt_with_whisperx
 
 
 def _slugify(s: str) -> str:
@@ -92,6 +94,11 @@ def download_selector(
     with_ru: bool,
     require_ru: bool,
     translate_en_if_missing: bool,
+    asr_if_missing: bool,
+    asr_model: str,
+    asr_device: str,
+    asr_compute_type: str,
+    asr_batch_size: int,
     codex_model: str | None,
     codex_chunk_cues: int,
 ) -> int:
@@ -131,19 +138,35 @@ def download_selector(
             else:
                 debug(f"cache hit mp4: {mp4_path}")
 
-            # Subtitles (cached vtt + cached srt).
-            if not resolved.subtitles_es_vtt:
-                raise RuntimeError(f"missing Spanish subtitles for asset {a.asset_id}")
-            with stage(f"download:subs:es:{a.asset_id}"):
-                _download_sub_vtt(http, resolved.subtitles_es_vtt, paths.subs / f"{a.asset_id}.es.vtt")
-
-            with stage(f"build:srt:es:{a.asset_id}"):
-                es_cues = parse_vtt((paths.subs / f"{a.asset_id}.es.vtt").read_text(encoding="utf-8"))
-                srt_es = paths.tmp / f"{base}.spa.srt"
-                if not srt_es.exists():
-                    srt_es.write_text(cues_to_srt(es_cues), encoding="utf-8")
-                else:
-                    debug(f"cache hit srt: {srt_es}")
+            # Subtitles: RTVE ES VTT when present, otherwise WhisperX fallback.
+            srt_es = paths.tmp / f"{base}.spa.srt"
+            if resolved.subtitles_es_vtt:
+                with stage(f"download:subs:es:{a.asset_id}"):
+                    _download_sub_vtt(http, resolved.subtitles_es_vtt, paths.subs / f"{a.asset_id}.es.vtt")
+                with stage(f"build:srt:es:{a.asset_id}"):
+                    es_cues = parse_vtt((paths.subs / f"{a.asset_id}.es.vtt").read_text(encoding="utf-8"))
+                    if not srt_es.exists():
+                        srt_es.write_text(cues_to_srt(es_cues), encoding="utf-8")
+                    else:
+                        debug(f"cache hit srt: {srt_es}")
+            else:
+                if not asr_if_missing:
+                    raise RuntimeError(
+                        f"missing Spanish subtitles for asset {a.asset_id}; enable fallback with --asr-if-missing"
+                    )
+                with stage(f"build:srt:es_asr:{a.asset_id}"):
+                    if not srt_es.exists():
+                        transcribe_es_to_srt_with_whisperx(
+                            media_path=mp4_path,
+                            out_srt=srt_es,
+                            model=asr_model,
+                            device=asr_device,
+                            compute_type=asr_compute_type,
+                            batch_size=asr_batch_size,
+                        )
+                    else:
+                        debug(f"cache hit srt: {srt_es}")
+                    es_cues = parse_srt(srt_es.read_text(encoding="utf-8"))
 
             subs = [(srt_es, "spa", "Spanish")]
 

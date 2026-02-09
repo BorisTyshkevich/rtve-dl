@@ -17,6 +17,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--quality", default="mp4", choices=["mp4", "best"], help="Prefer progressive MP4 or use best-effort")
     p.add_argument("--debug", action="store_true", help="Print progress/stage information")
     p.add_argument(
+        "--asr-if-missing",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="If RTVE has no ES subtitles, generate ES subtitles with WhisperX. Default: enabled.",
+    )
+    p.add_argument("--asr-model", default="large-v3", help="WhisperX model for ES subtitle fallback")
+    p.add_argument("--asr-device", default="mps", help="WhisperX device (Apple Silicon: mps)")
+    p.add_argument(
+        "--asr-compute-type",
+        default="float16",
+        help="WhisperX compute type (Apple Silicon recommended: float16)",
+    )
+    p.add_argument("--asr-batch-size", type=int, default=8, help="WhisperX batch size (default: 8)")
+    p.add_argument(
         "--translate-en-if-missing",
         default=True,
         action=argparse.BooleanOptionalAction,
@@ -52,6 +66,11 @@ def main(argv: list[str] | None = None) -> int:
             with_ru=a.with_ru,
             require_ru=a.require_ru,
             translate_en_if_missing=a.translate_en_if_missing,
+            asr_if_missing=a.asr_if_missing,
+            asr_model=a.asr_model,
+            asr_device=a.asr_device,
+            asr_compute_type=a.asr_compute_type,
+            asr_batch_size=a.asr_batch_size,
             codex_model=a.codex_model,
             codex_chunk_cues=a.codex_chunk_cues,
         )

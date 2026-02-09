@@ -17,6 +17,7 @@ dependencies = [
 # Only needed if you want to use the Descargavideos-compatible Blowfish helpers in
 # `rtve_dl.rtve.descargavideos_compat`.
 dv = ["cryptography>=41"]
+asr = ["whisperx>=3.1"]
 
 [project.scripts]
 rtve_dl = "rtve_dl.cli:main"
