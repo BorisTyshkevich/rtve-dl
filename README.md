@@ -32,14 +32,18 @@ The old experimental translation pipeline (lexicon datasets, multiple learning t
 
 ### Python Compatibility For ASR Backends
 
-`mlx-whisper` (default backend) works well with Python 3.12/3.13 on Apple Silicon.
+For Apple Silicon + `mlx-whisper` (default backend), use **Python 3.13** by default.
+Python 3.12 is also supported.
 
 WhisperX dependency resolution is currently sensitive to Python version.
 
-- Recommended for ASR fallback: Python `3.12` or `3.13`
-- Not recommended for WhisperX right now: Python `3.14` (common resolver failures around `ctranslate2`/version pins)
+Quick matrix:
 
-If your current venv uses Python 3.14, create a dedicated venv for ASR runs:
+- Python `3.13`: recommended for `mlx-whisper` (best default)
+- Python `3.12`: supported for `mlx-whisper`
+- Python `3.14`: not recommended for ASR in this project (common resolver issues, especially WhisperX/`ctranslate2`)
+
+If your current venv is not Python 3.13 (or uses Python 3.14), create a dedicated ASR venv:
 
 ```bash
 python3.13 -m venv .venv313
