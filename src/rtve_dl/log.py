@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import sys
+from datetime import datetime
 import time
 
 _DEBUG = False
@@ -14,9 +17,26 @@ def is_debug() -> bool:
     return _DEBUG
 
 
+def _ts() -> str:
+    return datetime.now().strftime("%H:%M:%S")
+
+
+def _colorize(level: str, msg: str) -> str:
+    if level != "ERROR":
+        return msg
+    if not sys.stderr.isatty() or os.environ.get("NO_COLOR"):
+        return msg
+    return f"\x1b[31m{msg}\x1b[0m"
+
+
 def debug(msg: str) -> None:
     if _DEBUG:
-        print(f"[debug] {msg}")
+        print(f"[{_ts()}] [DEBUG] {msg}")
+
+
+def error(msg: str) -> None:
+    line = f"[{_ts()}] [ERROR] {msg}"
+    print(_colorize("ERROR", line), file=sys.stderr)
 
 
 class stage:
@@ -38,5 +58,5 @@ class stage:
         if exc is None:
             debug(f"stage:done {self._name} ({dt:.2f}s)" if dt is not None else f"stage:done {self._name}")
         else:
-            debug(f"stage:fail {self._name}: {exc}")
+            error(f"stage:fail {self._name}: {exc}")
         return False

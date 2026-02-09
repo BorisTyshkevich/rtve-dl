@@ -43,10 +43,18 @@ def download_to_mp4(input_url: str, out_mp4: Path, *, headers: dict[str, str] | 
             "curl",
             "--location",
             "--fail",
+            "--silent",
+            "--show-error",
             "--continue-at",
             "-",
             "--output",
             str(part_mp4),
+            "--user-agent",
+            (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/144.0.0.0 Safari/537.36"
+            ),
         ]
         if headers:
             for k, v in headers.items():
@@ -54,10 +62,10 @@ def download_to_mp4(input_url: str, out_mp4: Path, *, headers: dict[str, str] | 
         cmd += [input_url]
         debug(" ".join(cmd))
         p = subprocess.run(cmd, text=True)
-        if p.returncode != 0:
-            raise RuntimeError(f"curl failed downloading {input_url}")
-        part_mp4.replace(out_mp4)
-        return
+        if p.returncode == 0:
+            part_mp4.replace(out_mp4)
+            return
+        debug(f"curl resume failed (exit {p.returncode}); falling back to ffmpeg: {input_url}")
 
     args: list[str] = ["-y"]
     if headers:
