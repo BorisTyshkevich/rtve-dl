@@ -294,6 +294,8 @@ Re-running `download` is safe:
 - subtitle `.vtt` files are cached in `tmp/<slug>/` and not re-downloaded
 - ASR-generated Spanish `.srt` files are cached in `tmp/<slug>/` and reused
 - RU chunk files (`*.ru.c*.ru.in.*.jsonl`, `*.ru.c*.ru.out.*.jsonl`) and built subtitle tracks (`*.rus.srt`, `*.spa_rus.srt`) are reused when present
+- video downloads use a partial file (`*.partial.mp4`) and rename on success
+- for direct MP4 URLs, download resume is enabled via `curl --continue-at -`
 
 Outputs and caches are stored under:
 
