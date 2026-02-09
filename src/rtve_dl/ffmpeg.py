@@ -29,14 +29,45 @@ def run_ffmpeg(args: list[str]) -> None:
 def download_to_mp4(input_url: str, out_mp4: Path, *, headers: dict[str, str] | None = None) -> None:
     out_mp4.parent.mkdir(parents=True, exist_ok=True)
     debug(f"download_to_mp4: {input_url} -> {out_mp4}")
+    if out_mp4.exists():
+        debug(f"cache hit mp4: {out_mp4}")
+        return
+
+    # Always download to a temporary file first, then atomically rename.
+    part_mp4 = out_mp4.with_name(out_mp4.name + ".partial.mp4")
+
+    # For direct MP4 URLs prefer curl resume; ffmpeg remux from a byte range is not
+    # a safe "append" strategy for already-partial MP4 output files.
+    if ".mp4" in input_url and shutil.which("curl") is not None:
+        cmd: list[str] = [
+            "curl",
+            "--location",
+            "--fail",
+            "--continue-at",
+            "-",
+            "--output",
+            str(part_mp4),
+        ]
+        if headers:
+            for k, v in headers.items():
+                cmd += ["--header", f"{k}: {v}"]
+        cmd += [input_url]
+        debug(" ".join(cmd))
+        p = subprocess.run(cmd, text=True)
+        if p.returncode != 0:
+            raise RuntimeError(f"curl failed downloading {input_url}")
+        part_mp4.replace(out_mp4)
+        return
+
     args: list[str] = ["-y"]
     if headers:
         # ffmpeg expects CRLF separated headers.
         hdr = "".join([f"{k}: {v}\r\n" for k, v in headers.items()])
         args += ["-headers", hdr]
     # For HLS this will remux; for MP4 it will copy. If it fails, user can pick another URL.
-    args += ["-i", input_url, "-c", "copy", str(out_mp4)]
+    args += ["-i", input_url, "-c", "copy", str(part_mp4)]
     run_ffmpeg(args)
+    part_mp4.replace(out_mp4)
 
 
 def mux_mkv(
