@@ -32,10 +32,17 @@ def transcribe_es_to_srt_with_mlx_whisper(
 
     out_srt.parent.mkdir(parents=True, exist_ok=True)
     model_candidates = [model_repo]
-    # Some environments fail to resolve whisper-small from HF; fallback keeps
-    # season runs moving without user intervention.
+    # Keep resilient fallbacks for common model-id mismatches.
     if model_repo == "mlx-community/whisper-small":
-        model_candidates.append("mlx-community/whisper-tiny")
+        model_candidates.extend(
+            [
+                "mlx-community/whisper-small-mlx",
+                "mlx-community/whisper-tiny-mlx",
+                "mlx-community/whisper-tiny",
+            ]
+        )
+    elif model_repo == "mlx-community/whisper-small-mlx":
+        model_candidates.extend(["mlx-community/whisper-tiny-mlx", "mlx-community/whisper-tiny"])
 
     result = None
     last_err: Exception | None = None

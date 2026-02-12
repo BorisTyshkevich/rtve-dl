@@ -10,4 +10,4 @@ build/
 # Project data/cache
 data/
 tmp/
-
+.codex/
