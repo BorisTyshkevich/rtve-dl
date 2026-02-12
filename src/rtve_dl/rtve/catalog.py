@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from rtve_dl.http import HttpClient
+from rtve_dl.log import debug
 
 
 @dataclass(frozen=True)
@@ -18,6 +23,7 @@ class SeriesAsset:
 
 _PROGRAM_ID_RE = re.compile(r"/api/programas/(\d+)/")
 _SEL_RE = re.compile(r"^T(?P<t>\d+)(?:S(?P<s>\d+))?$", re.IGNORECASE)
+_CATALOG_CACHE_TTL_S = 24 * 60 * 60
 
 
 def extract_program_id_from_html(series_html: str) -> str | None:
@@ -53,19 +59,70 @@ def iter_program_videos(program_id: str, http: HttpClient) -> list[dict]:
     return items
 
 
-def list_assets_for_selector(series_url: str, selector: str, http: HttpClient | None = None) -> list[SeriesAsset]:
+def _catalog_cache_path(series_url: str, cache_dir: Path) -> Path:
+    key = hashlib.sha1(series_url.encode("utf-8")).hexdigest()[:16]
+    return cache_dir / f"catalog_{key}.json"
+
+
+def _read_catalog_cache(path: Path, *, ttl_s: int) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    fetched_at = int(obj.get("fetched_at") or 0)
+    if fetched_at <= 0:
+        return None
+    age = int(time.time()) - fetched_at
+    if age > ttl_s:
+        debug(f"catalog cache stale: {path} age={age}s ttl={ttl_s}s")
+        return None
+    if not isinstance(obj.get("items"), list):
+        return None
+    debug(f"catalog cache hit: {path} age={age}s")
+    return obj
+
+
+def _write_catalog_cache(path: Path, *, series_url: str, program_id: str, items: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "series_url": series_url,
+        "program_id": program_id,
+        "fetched_at": int(time.time()),
+        "items": items,
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def list_assets_for_selector(
+    series_url: str,
+    selector: str,
+    http: HttpClient | None = None,
+    *,
+    cache_dir: Path | None = None,
+) -> list[SeriesAsset]:
     """
     Resolve season/episode selection into a list of RTVE assets using RTVE's public program feed.
     """
     http = http or HttpClient()
     season, episode = parse_selector(selector)
 
-    html = http.get_text(series_url)
-    program_id = extract_program_id_from_html(html)
-    if not program_id:
-        raise SystemExit("could not find program id on series page")
-
-    items = iter_program_videos(program_id, http)
+    cache_path: Path | None = _catalog_cache_path(series_url, cache_dir) if cache_dir is not None else None
+    cached: dict | None = _read_catalog_cache(cache_path, ttl_s=_CATALOG_CACHE_TTL_S) if cache_path else None
+    if cached is not None:
+        program_id = str(cached.get("program_id") or "")
+        items = cached.get("items", [])
+    else:
+        html = http.get_text(series_url)
+        program_id = extract_program_id_from_html(html)
+        if not program_id:
+            raise SystemExit("could not find program id on series page")
+        items = iter_program_videos(program_id, http)
+        if cache_path is not None:
+            _write_catalog_cache(cache_path, series_url=series_url, program_id=program_id, items=items)
 
     assets: list[SeriesAsset] = []
     for it in items:
@@ -100,4 +157,3 @@ def list_assets_for_selector(series_url: str, selector: str, http: HttpClient | 
     if not assets:
         raise SystemExit("no matching assets found for selector (season/episode)")
     return assets
-

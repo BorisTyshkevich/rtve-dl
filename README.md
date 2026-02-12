@@ -113,12 +113,84 @@ Defaults:
 - `--parallel` is enabled by default
 - `--jobs-episodes` defaults to `2` (season mode)
 - `--jobs-codex-chunks` defaults to `4` (per translation task)
+- `--subtitle-delay-ms` defaults to `800` (applied at MKV build only)
+- `--subtitle-delay-mode` defaults to `manual`
+
+### Subtitle delay at MKV stage
+
+RTVE subtitle timestamps are sometimes tuned for the web player and may appear early/late in VLC.
+`rtve_dl` applies a configurable global subtitle offset **only during muxing into MKV**.
+
+- `--subtitle-delay-ms 800` means subtitles appear 800ms later (default)
+- positive values delay subtitles
+- negative values make subtitles appear earlier
+
+Examples:
+
+```bash
+# One episode with 500ms delay
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 \
+  --series-slug cuentame --subtitle-delay-ms 500
+
+# Whole season with subtitles shifted 250ms earlier
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 \
+  --series-slug cuentame --subtitle-delay-ms -250
+```
+
+Rebuild workflow:
+
+- delete only `data/<slug>/SxxExx_<title>.mkv`
+- rerun with a different `--subtitle-delay-ms`
+- existing cached MP4/SRT/translation files are reused
+
+### Automatic subtitle delay (per series)
+
+You can ask `rtve_dl` to estimate subtitle delay automatically:
+
+```bash
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 \
+  --series-slug cuentame \
+  --subtitle-delay-mode auto
+```
+
+Auto mode behavior:
+
+- computes one delay value and applies it at MKV mux stage
+- stores cache in `tmp/<slug>/subtitle_delay.auto.json`
+- reuses cache on next runs
+- force recompute with `--subtitle-delay-auto-refresh`
+
+Useful knobs:
+
+- `--subtitle-delay-auto-scope {series,episode}` (default `series`)
+- `--subtitle-delay-auto-samples <N>` (default `3`)
+- `--subtitle-delay-auto-max-ms <N>` (default `15000`)
+
+Implementation notes:
+
+- hybrid estimator: speech-energy alignment first, ASR fallback on low confidence
+- if no suitable local sample (`mp4` + `spa.srt`) is available, falls back to 800ms
+
+### Series catalog caching
+
+Catalog responses from RTVE are cached on disk to avoid re-downloading all catalog pages on every run.
+
+- cache location: `tmp/<slug>/catalog_<hash>.json`
+- default cache TTL: 24 hours
+- on cache hit, catalog API calls are skipped
+- to force refresh immediately, delete the cache file in `tmp/<slug>/`
+
+Per-episode pre-resolve short-circuit:
+
+- if `data/<slug>/<episode>.mkv` already exists, episode is skipped before resolve
+- if MKV is missing but all required local inputs are present (`mp4` + required `srt` tracks), resolver API calls are skipped and episode is remuxed directly
 
 ### Parallel pipeline
 
 When `--parallel` is enabled, per episode the downloader runs:
 
-- video download/cache in parallel with Spanish subtitle preparation (RTVE VTT or ASR)
+- video download/cache in parallel with Spanish subtitle preparation when RTVE ES VTT exists
+- if RTVE ES VTT is missing, video is downloaded first, then ASR runs (ASR needs local MP4)
 - once Spanish cues are ready, EN and RU subtitle tasks in parallel
 - Codex chunk translation in parallel per language (`--jobs-codex-chunks`)
 - mux after required inputs are ready
@@ -137,7 +209,7 @@ If RTVE ES subtitles exist, they are used directly and ASR is skipped.
 Default ASR settings:
 
 - `--asr-backend mlx`
-- `--asr-mlx-model mlx-community/whisper-small`
+- `--asr-mlx-model mlx-community/whisper-small-mlx`
 
 Note for Apple Silicon:
 
@@ -148,7 +220,7 @@ You can tune performance/quality explicitly:
 
 ```bash
 rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 --series-slug cuentame \
-  --asr-backend mlx --asr-mlx-model mlx-community/whisper-small
+  --asr-backend mlx --asr-mlx-model mlx-community/whisper-small-mlx
 ```
 
 #### Recommended installation and first run (Apple Silicon)

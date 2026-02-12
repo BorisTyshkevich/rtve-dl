@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument(
         "--asr-mlx-model",
-        default="mlx-community/whisper-small",
+        default="mlx-community/whisper-small-mlx",
         help="MLX Whisper model repo (used when --asr-backend mlx)",
     )
     p.add_argument("--asr-model", default="large-v3", help="WhisperX model for ES subtitle fallback")
@@ -90,6 +90,45 @@ def main(argv: list[str] | None = None) -> int:
         default=4,
         help="Codex chunk workers per translation task. Default: 4",
     )
+    p.add_argument(
+        "--subtitle-delay-ms",
+        type=int,
+        default=800,
+        help=(
+            "Subtitle offset in milliseconds applied at MKV mux stage only. "
+            "Positive values delay subtitles; negative values make them appear earlier. "
+            "Default: 800"
+        ),
+    )
+    p.add_argument(
+        "--subtitle-delay-mode",
+        default="manual",
+        choices=["manual", "auto"],
+        help="Subtitle delay mode. manual uses --subtitle-delay-ms; auto estimates per series.",
+    )
+    p.add_argument(
+        "--subtitle-delay-auto-scope",
+        default="series",
+        choices=["series", "episode"],
+        help="Auto-delay estimation scope. Default: series",
+    )
+    p.add_argument(
+        "--subtitle-delay-auto-samples",
+        type=int,
+        default=3,
+        help="Number of local episode samples for auto-delay in series scope. Default: 3",
+    )
+    p.add_argument(
+        "--subtitle-delay-auto-max-ms",
+        type=int,
+        default=15000,
+        help="Max absolute subtitle delay considered by auto mode. Default: 15000",
+    )
+    p.add_argument(
+        "--subtitle-delay-auto-refresh",
+        action="store_true",
+        help="Recompute auto subtitle delay even if cache exists.",
+    )
 
     def _cmd_download(a: argparse.Namespace) -> int:
         set_debug(a.debug)
@@ -111,6 +150,12 @@ def main(argv: list[str] | None = None) -> int:
             asr_mlx_model=a.asr_mlx_model,
             codex_model=a.codex_model,
             codex_chunk_cues=a.codex_chunk_cues,
+            subtitle_delay_ms=a.subtitle_delay_ms,
+            subtitle_delay_mode=a.subtitle_delay_mode,
+            subtitle_delay_auto_scope=a.subtitle_delay_auto_scope,
+            subtitle_delay_auto_samples=a.subtitle_delay_auto_samples,
+            subtitle_delay_auto_max_ms=a.subtitle_delay_auto_max_ms,
+            subtitle_delay_auto_refresh=a.subtitle_delay_auto_refresh,
             parallel=a.parallel,
             jobs_episodes=a.jobs_episodes,
             jobs_codex_chunks=a.jobs_codex_chunks,

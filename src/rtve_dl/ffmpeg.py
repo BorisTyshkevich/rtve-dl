@@ -26,6 +26,47 @@ def run_ffmpeg(args: list[str]) -> None:
         raise RuntimeError(f"ffmpeg failed: {' '.join(args)}")
 
 
+def is_valid_mp4(path: Path) -> bool:
+    """
+    Best-effort MP4 integrity check for cache-hit decisions.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe:
+        p = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=nokey=1:noprint_wrappers=1",
+                str(path),
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if p.returncode != 0:
+            return False
+        out = (p.stdout or "").strip()
+        return bool(out)
+
+    # Fallback if ffprobe is unavailable.
+    p = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(path), "-f", "null", "-"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return p.returncode == 0
+
+
 def download_to_mp4(input_url: str, out_mp4: Path, *, headers: dict[str, str] | None = None) -> None:
     out_mp4.parent.mkdir(parents=True, exist_ok=True)
     debug(f"download_to_mp4: {input_url} -> {out_mp4}")
@@ -83,15 +124,21 @@ def mux_mkv(
     video_path: Path,
     out_mkv: Path,
     subs: list[tuple[Path, str, str]],
+    subtitle_delay_ms: int = 0,
 ) -> None:
     """
     subs: list of (path, language, title). Codec will be SRT-in-MKV.
     """
     out_mkv.parent.mkdir(parents=True, exist_ok=True)
-    debug(f"mux_mkv: video={video_path} out={out_mkv} subs={len(subs)}")
+    debug(
+        "mux_mkv: "
+        f"video={video_path} out={out_mkv} subs={len(subs)} subtitle_delay_ms={subtitle_delay_ms}"
+    )
     args: list[str] = ["-y", "-i", str(video_path)]
+    subtitle_offset_sec = f"{subtitle_delay_ms / 1000.0:.3f}"
     for p, _lang, _title in subs:
-        args += ["-i", str(p)]
+        # Apply subtitle delay at mux stage only; keep cached SRT files unchanged.
+        args += ["-itsoffset", subtitle_offset_sec, "-i", str(p)]
 
     # Map all streams: video+audio from input 0; then each subtitle input.
     args += ["-map", "0"]
