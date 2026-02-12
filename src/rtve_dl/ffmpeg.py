@@ -26,6 +26,39 @@ def run_ffmpeg(args: list[str]) -> None:
         raise RuntimeError(f"ffmpeg failed: {' '.join(args)}")
 
 
+def probe_duration_seconds(path: Path) -> float | None:
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    p = subprocess.run(
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nokey=1:noprint_wrappers=1",
+            str(path),
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if p.returncode != 0:
+        return None
+    out = (p.stdout or "").strip()
+    if not out:
+        return None
+    try:
+        dur = float(out)
+    except ValueError:
+        return None
+    return dur if dur > 0 else None
+
+
 def is_valid_mp4(path: Path) -> bool:
     """
     Best-effort MP4 integrity check for cache-hit decisions.
@@ -33,29 +66,9 @@ def is_valid_mp4(path: Path) -> bool:
     if not path.exists() or path.stat().st_size == 0:
         return False
 
-    ffprobe = shutil.which("ffprobe")
-    if ffprobe:
-        p = subprocess.run(
-            [
-                ffprobe,
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=nokey=1:noprint_wrappers=1",
-                str(path),
-            ],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        if p.returncode != 0:
-            return False
-        out = (p.stdout or "").strip()
-        return bool(out)
+    dur = probe_duration_seconds(path)
+    if dur is not None:
+        return True
 
     # Fallback if ffprobe is unavailable.
     p = subprocess.run(
@@ -103,10 +116,13 @@ def download_to_mp4(input_url: str, out_mp4: Path, *, headers: dict[str, str] | 
         cmd += [input_url]
         debug(" ".join(cmd))
         p = subprocess.run(cmd, text=True)
-        if p.returncode == 0:
+        if p.returncode == 0 and part_mp4.exists() and part_mp4.stat().st_size > 0:
             part_mp4.replace(out_mp4)
             return
-        debug(f"curl resume failed (exit {p.returncode}); falling back to ffmpeg: {input_url}")
+        debug(
+            "curl resume failed or produced no output "
+            f"(exit {p.returncode}); falling back to ffmpeg: {input_url}"
+        )
 
     args: list[str] = ["-y"]
     if headers:
