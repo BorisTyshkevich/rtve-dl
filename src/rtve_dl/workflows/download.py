@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from rtve_dl.ffmpeg import download_to_mp4, is_valid_mp4, mux_mkv
+from rtve_dl.ffmpeg import download_to_mp4, is_valid_mp4, mux_mkv, probe_duration_seconds
 from rtve_dl.http import HttpClient
 from rtve_dl.rtve.catalog import SeriesAsset, list_assets_for_selector
 from rtve_dl.rtve.resolve import RtveResolver
@@ -20,6 +20,7 @@ from rtve_dl.codex_ru import translate_es_to_ru_with_codex
 from rtve_dl.codex_en import translate_es_to_en_with_codex
 from rtve_dl.asr_whisperx import transcribe_es_to_srt_with_whisperx
 from rtve_dl.asr_mlx import transcribe_es_to_srt_with_mlx_whisper
+from rtve_dl.index_html import build_slug_index
 
 
 def _slugify(s: str) -> str:
@@ -136,6 +137,24 @@ def _collect_local_subs_for_mux(
     return subs
 
 
+def _srt_duration_seconds(srt_path: Path) -> float:
+    cues = parse_srt(srt_path.read_text(encoding="utf-8", errors="replace"))
+    if not cues:
+        return 0.0
+    max_end_ms = max(c.end_ms for c in cues)
+    return max(0.0, max_end_ms / 1000.0)
+
+
+def _mp4_matches_es_srt(mp4_path: Path, srt_es_path: Path, *, min_ratio: float = 0.70) -> bool:
+    v_dur = probe_duration_seconds(mp4_path)
+    if v_dur is None:
+        return False
+    s_dur = _srt_duration_seconds(srt_es_path)
+    if s_dur <= 0:
+        return True
+    return v_dur >= (s_dur * min_ratio)
+
+
 def download_selector(
     series_url: str,
     selector: str,
@@ -232,7 +251,7 @@ def download_selector(
                 with_ru=with_ru,
                 translate_en_if_missing=translate_en_if_missing,
             )
-            if local_subs is not None and is_valid_mp4(mp4_path):
+            if local_subs is not None and is_valid_mp4(mp4_path) and _mp4_matches_es_srt(mp4_path, srt_es):
                 debug(f"local inputs ready (pre-resolve), skipping resolve: {base}")
                 _ep_log(ep_tag, "mux")
                 with stage(f"mux:{a.asset_id}"):
@@ -351,6 +370,25 @@ def download_selector(
                         debug(f"cache hit srt: {srt_es}")
                     return parse_srt(srt_es.read_text(encoding="utf-8"))
 
+            def _ensure_mp4_consistent_with_es() -> None:
+                if not _is_nonempty_file(srt_es):
+                    return
+                if _mp4_matches_es_srt(mp4_path, srt_es):
+                    return
+                v_dur = probe_duration_seconds(mp4_path) or 0.0
+                s_dur = _srt_duration_seconds(srt_es)
+                error(
+                    f"{a.asset_id}: mp4 too short vs ES subtitles "
+                    f"(video={v_dur:.2f}s subtitles={s_dur:.2f}s), re-downloading"
+                )
+                _task_video(force_redownload=True)
+                if not _mp4_matches_es_srt(mp4_path, srt_es):
+                    v_dur2 = probe_duration_seconds(mp4_path) or 0.0
+                    raise RuntimeError(
+                        f"mp4 duration is still too short after re-download "
+                        f"(video={v_dur2:.2f}s subtitles={s_dur:.2f}s)"
+                    )
+
             subs = [(srt_es, "spa", "Spanish")]
 
             def _task_en() -> tuple[Path, str, str] | None:
@@ -459,6 +497,8 @@ def download_selector(
                     with ThreadPoolExecutor(max_workers=1) as video_pool:
                         video_future = video_pool.submit(_task_video)
                         es_cues = _task_es()
+                        video_future.result()
+                        _ensure_mp4_consistent_with_es()
                         _ep_log(ep_tag, "translations")
                         with ThreadPoolExecutor(max_workers=2) as tr_pool:
                             fut_ru = tr_pool.submit(_task_ru)
@@ -472,10 +512,10 @@ def download_selector(
                                 error(f"{a.asset_id}: EN subtitle fallback failed (continuing): {e}")
                             ru_tracks = fut_ru.result()
                             subs.extend(ru_tracks)
-                        video_future.result()
                 else:
                     _task_video()
                     es_cues = _task_es()
+                    _ensure_mp4_consistent_with_es()
                     _ep_log(ep_tag, "translations")
                     with ThreadPoolExecutor(max_workers=2) as tr_pool:
                         fut_ru = tr_pool.submit(_task_ru)
@@ -491,6 +531,7 @@ def download_selector(
             else:
                 _task_video()
                 es_cues = _task_es()
+                _ensure_mp4_consistent_with_es()
                 _ep_log(ep_tag, "translations")
                 try:
                     en_track = _task_en()
@@ -537,5 +578,12 @@ def download_selector(
             err = _process_one(a)
             if err:
                 failures.append(err)
+
+    try:
+        debug(f"index:start {paths.out}")
+        index_path = build_slug_index(paths.out)
+        debug(f"index:done {index_path}")
+    except Exception as e:
+        error(f"index:fail {paths.out}: {e}")
 
     return 1 if failures else 0
