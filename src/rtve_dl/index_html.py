@@ -319,30 +319,31 @@ def build_slug_index(
             else Path(c.row.name).stem
         )
 
-        img_html = (
+        media_title = escape(Path(c.row.name).stem, quote=True)
+        img_inner = (
             f"<img src=\"{escape(c.image_url, quote=True)}\" alt=\"{escape(c.title_es)}\" loading=\"lazy\" />"
             if c.image_url
             else "<div class=\"noimg\">No image</div>"
         )
+        img_html = (
+            f"<a href=\"#\" class=\"m3u-generate media-thumb\" data-media=\"{escape(rel_href, quote=True)}\" "
+            f"data-title=\"{media_title}\">{img_inner}</a>"
+        )
 
-        title_es_html = (
-            f"<a href=\"#\" class=\"m3u-generate title-es\" data-media=\"{escape(rel_href, quote=True)}\" "
-            f"data-title=\"{escape(Path(c.row.name).stem, quote=True)}\">{escape(c.title_es)}</a>"
+        epid_html = (
+            f"<a href=\"#\" class=\"m3u-generate epid-link\" data-media=\"{escape(rel_href, quote=True)}\" "
+            f"data-title=\"{media_title}\">{escape(episode_id)}</a>"
         )
+        title_es_html = f"<div class=\"title-es\">{escape(c.title_es)}</div>"
         desc_es_html = escape(c.description_es) if c.description_es else "—"
-        title_ru_html = (
-            f"<a href=\"#\" class=\"m3u-generate title-ru\" data-media=\"{escape(rel_href, quote=True)}\" "
-            f"data-title=\"{escape(Path(c.row.name).stem, quote=True)}\">{escape(title_ru)}</a>"
-            if title_ru
-            else "<div class=\"title-ru\">—</div>"
-        )
+        title_ru_html = f"<div class=\"title-ru\">{escape(title_ru)}</div>" if title_ru else "<div class=\"title-ru\">—</div>"
         desc_ru_html = escape(desc_ru) if desc_ru else "—"
         release_html = escape(c.release_date) if c.release_date else "—"
         size_html = _format_size_gb(c.row.size_bytes)
 
         body_rows.append(
             "<tr>"
-            f"<td class=\"thumb col-meta\"><div class=\"epid\">{escape(episode_id)}</div>{img_html}"
+            f"<td class=\"thumb col-meta\"><div class=\"epid-wrap\">{epid_html}</div>{img_html}"
             "<div class=\"meta-lines\">"
             f"<div>{release_html}</div>"
             f"<div>{escape(size_html)}"
@@ -390,7 +391,10 @@ def build_slug_index(
         "    .thumb img { width: 240px; max-width: 240px; height: auto; border-radius: 8px; display: block; background: #eef2f7; }\n"
         "    .noimg { width: 240px; height: 135px; border-radius: 8px; background: #eef2f7; color: #6b7280; display: flex; align-items: center; justify-content: center; }\n"
         "    .col-meta { width: 300px; }\n"
-        "    .epid { font-size: 0.95rem; font-weight: 700; color: #111827; margin: 0 0 8px; }\n"
+        "    .epid-wrap { display: block; margin-top: 8px; }\n"
+        "    .epid-link { display: inline-block; font-size: 0.95rem; font-weight: 700; color: #111827; text-decoration: none; }\n"
+        "    .epid-link:hover { text-decoration: underline; }\n"
+        "    .media-thumb { display: block; text-decoration: none; }\n"
         "    .meta-lines { margin-top: 8px; color: #374151; }\n"
         "    .meta-lines div { margin: 0 0 6px; line-height: 1.45; }\n"
         "    .col-es, .col-ru { width: 390px; }\n"
