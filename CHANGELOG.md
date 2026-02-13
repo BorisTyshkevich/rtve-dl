@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.1
+
+- Changed `--reset-layer` execution model to selector-wide preflight:
+  - reset now runs once for the whole selector (`T7`/`T7S9`) before processing starts
+  - improved crash/restart workflow (rerun without reset continues from rebuilt cache)
+- Added a new subtitle track without extra Codex cost:
+  - `Spanish|Russian (Full)` dual-line subtitles (`ES + full RU`)
+  - generated from existing RU translation output/cache (no additional translation pass)
+- Extended cache/reset behavior for the new full bilingual track:
+  - local mux precheck now includes `*.spa_rus_full.srt`
+  - `subs-ru` reset removes `*.spa_rus_full.srt` and related RU artifacts
+- Improved MKV subtitle disposition behavior:
+  - removed duplicate disposition assignment for the default subtitle stream
+  - avoids ffmpeg warning about multiple disposition options for the same stream
+- Added CLI aliases:
+  - `--reset` as alias for `--reset-layer`
+  - `--delay` as alias for `--subtitle-delay-ms`
+
 ## 0.2.0
 
 - Reworked downloader pipeline for high parallelism:
