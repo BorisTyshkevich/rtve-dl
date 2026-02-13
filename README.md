@@ -11,6 +11,7 @@ Per episode MKV can include:
 - English subtitle track (RTVE or ES->EN fallback)
 - Russian full translation track
 - Spanish|RU refs learning track
+- Spanish|Russian (Full) dual-line track
 
 `data/<slug>/index.html` is regenerated after each run.
 
