@@ -154,9 +154,18 @@ def _safe_unlink(path: Path, *, reason: str) -> None:
         error(f"reset:{reason} failed to remove {path}: {e}")
 
 
-def _safe_unlink_glob(directory: Path, pattern: str, *, reason: str, exclude_prefix: str | None = None) -> None:
+def _safe_unlink_glob(
+    directory: Path,
+    pattern: str,
+    *,
+    reason: str,
+    exclude_prefix: str | None = None,
+    exclude_contains: str | None = None,
+) -> None:
     for p in directory.glob(pattern):
         if exclude_prefix and p.name.startswith(exclude_prefix):
+            continue
+        if exclude_contains and exclude_contains in p.name:
             continue
         _safe_unlink(p, reason=reason)
 
@@ -165,42 +174,48 @@ def _reset_catalog_layer(paths: SeriesPaths) -> None:
     _safe_unlink_glob(paths.tmp, "catalog_*.json", reason="catalog")
 
 
-def _reset_episode_layers(*, paths: SeriesPaths, asset_id: str, base: str, layers: set[str]) -> None:
+def _episode_prefix(a: SeriesAsset) -> str:
+    season_num = a.season or 0
+    episode_num = a.episode or 0
+    return f"S{season_num:02d}E{episode_num:02d}_"
+
+
+def _reset_selector_layers(*, paths: SeriesPaths, assets: list[SeriesAsset], layers: set[str]) -> None:
     if not layers:
         return
+    debug(f"reset:preflight start layers={','.join(sorted(layers))} episodes={len(assets)}")
+    for a in assets:
+        prefix = _episode_prefix(a)
+        asset_id = a.asset_id
 
-    if "mkv" in layers:
-        _safe_unlink(paths.out / f"{base}.mkv", reason="mkv")
-        _safe_unlink(paths.out / f"{base}.mkv.partial.mkv", reason="mkv")
+        if "mkv" in layers:
+            _safe_unlink_glob(paths.out, f"{prefix}*.mkv", reason="mkv")
+            _safe_unlink_glob(paths.out, f"{prefix}*.mkv.partial.mkv", reason="mkv")
 
-    if "video" in layers:
-        _safe_unlink(paths.tmp / f"{base}.mp4", reason="video")
-        _safe_unlink(paths.tmp / f"{base}.mp4.partial.mp4", reason="video")
+        if "video" in layers:
+            _safe_unlink_glob(paths.tmp, f"{prefix}*.mp4", reason="video")
+            _safe_unlink_glob(paths.tmp, f"{prefix}*.mp4.partial.mp4", reason="video")
 
-    if "subs-es" in layers:
-        _safe_unlink(paths.tmp / f"{base}.spa.srt", reason="subs-es")
-        _safe_unlink(paths.tmp / f"{asset_id}.es.vtt", reason="subs-es")
-        _safe_unlink_glob(paths.tmp, f"{base}.en*", reason="subs-es")
-        _safe_unlink_glob(paths.tmp, f"{base}.ru_ref*", reason="subs-es")
-        _safe_unlink_glob(paths.tmp, f"{base}.ru*", reason="subs-es")
+        if "subs-es" in layers:
+            _safe_unlink_glob(paths.tmp, f"{prefix}*.spa.srt", reason="subs-es")
+            _safe_unlink(paths.tmp / f"{asset_id}.es.vtt", reason="subs-es")
+            _safe_unlink_glob(paths.tmp, f"{prefix}*.en*", reason="subs-es")
+            _safe_unlink_glob(paths.tmp, f"{prefix}*.ru_ref*", reason="subs-es")
+            _safe_unlink_glob(paths.tmp, f"{prefix}*.ru*", reason="subs-es")
 
-    if "subs-en" in layers:
-        _safe_unlink(paths.tmp / f"{base}.eng.srt", reason="subs-en")
-        _safe_unlink(paths.tmp / f"{asset_id}.en.vtt", reason="subs-en")
-        _safe_unlink_glob(paths.tmp, f"{base}.en*", reason="subs-en")
+        if "subs-en" in layers:
+            _safe_unlink_glob(paths.tmp, f"{prefix}*.eng.srt", reason="subs-en")
+            _safe_unlink(paths.tmp / f"{asset_id}.en.vtt", reason="subs-en")
+            _safe_unlink_glob(paths.tmp, f"{prefix}*.en*", reason="subs-en")
 
-    if "subs-ru" in layers:
-        _safe_unlink(paths.tmp / f"{base}.rus.srt", reason="subs-ru")
-        _safe_unlink_glob(
-            paths.tmp,
-            f"{base}.ru*",
-            reason="subs-ru",
-            exclude_prefix=f"{base}.ru_ref",
-        )
+        if "subs-ru" in layers:
+            _safe_unlink_glob(paths.tmp, f"{prefix}*.rus.srt", reason="subs-ru")
+            _safe_unlink_glob(paths.tmp, f"{prefix}*.ru*", reason="subs-ru", exclude_contains=".ru_ref")
 
-    if "subs-refs" in layers:
-        _safe_unlink(paths.tmp / f"{base}.spa_rus.srt", reason="subs-refs")
-        _safe_unlink_glob(paths.tmp, f"{base}.ru_ref*", reason="subs-refs")
+        if "subs-refs" in layers:
+            _safe_unlink_glob(paths.tmp, f"{prefix}*.spa_rus.srt", reason="subs-refs")
+            _safe_unlink_glob(paths.tmp, f"{prefix}*.ru_ref*", reason="subs-refs")
+    debug("reset:preflight done")
 
 
 def _download_sub_vtt(http: HttpClient, url: str, out_path: Path) -> None:
@@ -301,6 +316,7 @@ def download_selector(
         _reset_catalog_layer(paths)
     with stage("catalog"):
         assets = list_assets_for_selector(series_url, selector, http=http, cache_dir=paths.tmp)
+    _reset_selector_layers(paths=paths, assets=assets, layers={x for x in active_reset_layers if x != "catalog"})
 
     effective_subtitle_delay_ms = subtitle_delay_ms
     if subtitle_delay_mode == "auto":
@@ -346,7 +362,6 @@ def download_selector(
         try:
             _ep_log(ep_tag, "start")
             base = base_guess
-            _reset_episode_layers(paths=paths, asset_id=a.asset_id, base=base, layers=active_reset_layers)
             out_mkv = paths.out / f"{base}.mkv"
             mp4_path = paths.tmp / f"{base}.mp4"
             srt_es = paths.tmp / f"{base}.spa.srt"
@@ -388,8 +403,6 @@ def download_selector(
             title = a.title or resolved.title or a.asset_id
             base = f"S{season_num:02d}E{episode_num:02d}_{_slug_title(title)}"
             ep_tag = base
-            if base != base_guess:
-                _reset_episode_layers(paths=paths, asset_id=a.asset_id, base=base, layers=active_reset_layers)
             _ep_log(ep_tag, "resolved")
 
             out_mkv = paths.out / f"{base}.mkv"

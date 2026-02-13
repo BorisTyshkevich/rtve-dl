@@ -92,6 +92,7 @@ rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 \
 ## Reset Layers
 
 Use `--reset-layer` to invalidate selected cache layers before processing.
+Reset is applied in a selector-wide preflight phase first (for all episodes in `T7`, or one episode in `T7S9`), then recomputation starts.
 
 Allowed values:
 - `subs-es`
@@ -138,6 +139,8 @@ You can pass multiple layers:
 rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S9 \
   --series-slug cuentame --reset-layer subs-ru,subs-refs
 ```
+
+If a season run with reset crashes, restart without `--reset-layer` to continue from already rebuilt cache.
 
 ## ASR Fallback
 

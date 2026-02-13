@@ -7,6 +7,7 @@ This document describes all cache layers used by `rtve_dl`, reset semantics, and
 - Episode processing cache: `tmp/<slug>/...`
 - Final outputs: `data/<slug>/...`
 - Selector-scoped reset: `--reset-layer ...` affects only episodes selected by the current selector (`T7`, `T7S9`, etc.)
+- Reset timing: selector reset is executed once in preflight before episode processing starts.
 - Slug-scoped reset: `catalog` layer
 
 ## Directory Layout
@@ -108,30 +109,30 @@ Reset expands internally to dependent layers:
 Episode layers:
 
 - `mkv`
-  - `data/<slug>/<base>.mkv`
-  - `data/<slug>/<base>.mkv.partial.mkv`
+  - `data/<slug>/SxxExx_*.mkv` for selected episodes
+  - `data/<slug>/SxxExx_*.mkv.partial.mkv` for selected episodes
 
 - `video`
-  - `tmp/<slug>/<base>.mp4`
-  - `tmp/<slug>/<base>.mp4.partial.mp4`
+  - `tmp/<slug>/SxxExx_*.mp4` for selected episodes
+  - `tmp/<slug>/SxxExx_*.mp4.partial.mp4` for selected episodes
 
 - `subs-es`
-  - `tmp/<slug>/<base>.spa.srt`
+  - `tmp/<slug>/SxxExx_*.spa.srt` for selected episodes
   - `tmp/<slug>/<asset_id>.es.vtt`
-  - EN/RU/refs Codex chunk caches (`<base>.en*`, `<base>.ru*`, `<base>.ru_ref*`)
+  - EN/RU/refs Codex chunk caches (`SxxExx_*.en*`, `SxxExx_*.ru*`, `SxxExx_*.ru_ref*`)
 
 - `subs-en`
-  - `tmp/<slug>/<base>.eng.srt`
+  - `tmp/<slug>/SxxExx_*.eng.srt` for selected episodes
   - `tmp/<slug>/<asset_id>.en.vtt`
-  - EN Codex chunk caches (`<base>.en*`)
+  - EN Codex chunk caches (`SxxExx_*.en*`)
 
 - `subs-ru`
-  - `tmp/<slug>/<base>.rus.srt`
-  - RU full Codex chunk caches (`<base>.ru*`, excluding `<base>.ru_ref*`)
+  - `tmp/<slug>/SxxExx_*.rus.srt` for selected episodes
+  - RU full Codex chunk caches (`SxxExx_*.ru*`, excluding `*.ru_ref*`)
 
 - `subs-refs`
-  - `tmp/<slug>/<base>.spa_rus.srt`
-  - RU refs Codex chunk caches (`<base>.ru_ref*`)
+  - `tmp/<slug>/SxxExx_*.spa_rus.srt` for selected episodes
+  - RU refs Codex chunk caches (`SxxExx_*.ru_ref*`)
 
 Slug layer:
 
@@ -151,12 +152,16 @@ There are two distinct behaviors:
 - Matching SRT is deleted.
 - Matching Codex chunk caches are also deleted intentionally.
 - This forces clean retranslation for that layer.
+- This reset happens in preflight for all selected episodes.
 
 ## Selector Scope
 
 - `T7S9` reset affects only S07E09 files.
 - `T7` reset affects only episodes selected in season 7.
 - `catalog` is slug-level and not episode-limited.
+- Recommended restart flow after crash in season reset:
+  - first run with `--reset-layer ...`
+  - restart without `--reset-layer` to continue from cache
 
 ## Troubleshooting Patterns
 

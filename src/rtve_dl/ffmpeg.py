@@ -166,15 +166,22 @@ def mux_mkv(
     # Copy primary A/V streams, re-encode subtitle inputs as SRT-in-MKV.
     args += ["-c:v", "copy", "-c:a", "copy", "-c:s", "srt"]
 
+    default_idx: int | None = None
+    if default_subtitle_title:
+        default_idx = next(
+            (idx for idx, (_p, _lang, title) in enumerate(subs) if title == default_subtitle_title),
+            None,
+        )
+
     # Attach metadata per subtitle stream.
     for idx, (_p, lang, title) in enumerate(subs):
         args += [f"-metadata:s:s:{idx}", f"language={lang}"]
         args += [f"-metadata:s:s:{idx}", f"title={title}"]
-        # Start with no default subtitle flags; we'll mark one below if configured.
-        args += [f"-disposition:s:{idx}", "0"]
+        # Start with no default subtitle flags; selected default stream is set below.
+        if default_idx != idx:
+            args += [f"-disposition:s:{idx}", "0"]
 
     if default_subtitle_title:
-        default_idx = next((idx for idx, (_p, _lang, title) in enumerate(subs) if title == default_subtitle_title), None)
         if default_idx is None:
             debug(f"mux_mkv: default subtitle title not found: {default_subtitle_title!r}")
         else:
