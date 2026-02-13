@@ -581,7 +581,13 @@ def download_selector(
 
     try:
         debug(f"index:start {paths.out}")
-        index_path = build_slug_index(paths.out)
+        index_path = build_slug_index(
+            paths.out,
+            tmp_dir=paths.tmp,
+            codex_model=codex_model,
+            codex_chunk_cues=codex_chunk_cues,
+            jobs_codex_chunks=jobs_codex_chunks,
+        )
         debug(f"index:done {index_path}")
     except Exception as e:
         error(f"index:fail {paths.out}: {e}")
