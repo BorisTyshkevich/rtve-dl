@@ -313,6 +313,11 @@ def build_slug_index(
     for c in cards:
         rel_href = quote(c.row.name)
         title_ru, desc_ru = ru_map.get(c.key, ("", ""))
+        episode_id = (
+            f"S{c.row.season:02d}E{c.row.episode:02d}"
+            if c.row.season is not None and c.row.episode is not None
+            else Path(c.row.name).stem
+        )
 
         img_html = (
             f"<img src=\"{escape(c.image_url, quote=True)}\" alt=\"{escape(c.title_es)}\" loading=\"lazy\" />"
@@ -325,14 +330,19 @@ def build_slug_index(
             f"data-title=\"{escape(Path(c.row.name).stem, quote=True)}\">{escape(c.title_es)}</a>"
         )
         desc_es_html = escape(c.description_es) if c.description_es else "—"
-        title_ru_html = f"<div class=\"title-ru\">{escape(title_ru)}</div>" if title_ru else "<div class=\"title-ru\">—</div>"
+        title_ru_html = (
+            f"<a href=\"#\" class=\"m3u-generate title-ru\" data-media=\"{escape(rel_href, quote=True)}\" "
+            f"data-title=\"{escape(Path(c.row.name).stem, quote=True)}\">{escape(title_ru)}</a>"
+            if title_ru
+            else "<div class=\"title-ru\">—</div>"
+        )
         desc_ru_html = escape(desc_ru) if desc_ru else "—"
         release_html = escape(c.release_date) if c.release_date else "—"
         size_html = _format_size_gb(c.row.size_bytes)
 
         body_rows.append(
             "<tr>"
-            f"<td class=\"thumb col-meta\">{img_html}"
+            f"<td class=\"thumb col-meta\"><div class=\"epid\">{escape(episode_id)}</div>{img_html}"
             "<div class=\"meta-lines\">"
             f"<div>{release_html}</div>"
             f"<div>{escape(size_html)}"
@@ -380,6 +390,7 @@ def build_slug_index(
         "    .thumb img { width: 240px; max-width: 240px; height: auto; border-radius: 8px; display: block; background: #eef2f7; }\n"
         "    .noimg { width: 240px; height: 135px; border-radius: 8px; background: #eef2f7; color: #6b7280; display: flex; align-items: center; justify-content: center; }\n"
         "    .col-meta { width: 300px; }\n"
+        "    .epid { font-size: 0.95rem; font-weight: 700; color: #111827; margin: 0 0 8px; }\n"
         "    .meta-lines { margin-top: 8px; color: #374151; }\n"
         "    .meta-lines div { margin: 0 0 6px; line-height: 1.45; }\n"
         "    .col-es, .col-ru { width: 390px; }\n"
@@ -389,7 +400,6 @@ def build_slug_index(
         "    .empty { color: #6b7280; font-style: italic; }\n"
         "    a { color: #0b57d0; text-decoration: none; }\n"
         "    a:hover { text-decoration: underline; }\n"
-        "    .hint { margin-top: 10px; color: #6b7280; font-size: 0.92rem; }\n"
         "  </style>\n"
         "</head>\n"
         "<body>\n"
@@ -397,13 +407,11 @@ def build_slug_index(
         f"  <p class=\"meta-top\">Files: {len(rows)} | Total size: {escape(_format_size(total_size))}</p>\n"
         "  <div class=\"wrap\">\n"
         "    <table>\n"
-        "      <thead><tr><th>Picture</th><th>ES</th><th>RU</th></tr></thead>\n"
         "      <tbody>\n"
         f"        {rows_html}\n"
         "      </tbody>\n"
         "    </table>\n"
         "  </div>\n"
-        "  <p class=\"hint\">Name first tries VLC protocol launch; if blocked, it falls back to downloading a generated M3U playlist.</p>\n"
         "  <script>\n"
         "    (function () {\n"
         "      var LAUNCH_TIMEOUT_MS = 1600;\n"
