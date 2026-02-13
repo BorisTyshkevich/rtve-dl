@@ -92,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument(
         "--subtitle-delay-ms",
+        "--delay",
         type=int,
         default=800,
         help=(
@@ -131,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument(
         "--reset-layer",
+        "--reset",
         action="append",
         default=[],
         help=(
