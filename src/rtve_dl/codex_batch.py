@@ -24,8 +24,28 @@ def _ensure_codex_on_path() -> None:
         raise RuntimeError("codex CLI not found on PATH")
 
 
-def _build_prompt(*, target_language: str, jsonl_payload: str) -> str:
+def _build_prompt(*, target_language: str, jsonl_payload: str, prompt_mode: str) -> str:
     # Keep it short, strict, and machine-parseable.
+    if prompt_mode == "ru_refs_b2plus":
+        return (
+            "You are annotating Spanish subtitles for language learning.\n"
+            "Return JSONL only: exactly one JSON object per input line, matching the input line count.\n"
+            "Rules:\n"
+            "- Keep the same id.\n"
+            "- Output keys must be exactly: id, text\n"
+            "- text must be the ORIGINAL Spanish cue with inline Russian glosses in parentheses.\n"
+            "- Add glosses only for difficult B2/C1/C2 words or phrases.\n"
+            "- Do NOT add glosses for A1/A2/B1 obvious words.\n"
+            "- Prefer phrase-level glosses for idioms/set expressions.\n"
+            "- If no difficult term exists, return the original Spanish cue unchanged.\n"
+            "- Keep punctuation and line breaks stable.\n"
+            "- No extra commentary, no markdown.\n"
+            "- Do NOT add blank lines.\n"
+            "\n"
+            "INPUT JSONL:\n"
+            f"{jsonl_payload}\n"
+        )
+
     return (
         f"You are translating Spanish subtitles to natural {target_language}.\n"
         "Return JSONL only: exactly one JSON object per input line, matching the input line count.\n"
@@ -98,10 +118,14 @@ def _parse_jsonl_map(path: Path) -> dict[str, str]:
     return out
 
 
-def run_codex_chunk(*, chunk: CodexChunkPaths, model: str | None, target_language: str) -> None:
+def run_codex_chunk(
+    *, chunk: CodexChunkPaths, model: str | None, target_language: str, prompt_mode: str
+) -> None:
     _ensure_codex_on_path()
     payload = chunk.in_jsonl.read_text(encoding="utf-8")
-    prompt = _build_prompt(target_language=target_language, jsonl_payload=payload)
+    prompt = _build_prompt(
+        target_language=target_language, jsonl_payload=payload, prompt_mode=prompt_mode
+    )
 
     cmd = ["codex", "exec", "-s", "read-only", "--output-last-message", str(chunk.out_jsonl)]
     if model:
@@ -141,6 +165,7 @@ def _run_codex_chunks(
     model: str | None,
     target_language: str,
     max_workers: int,
+    prompt_mode: str,
 ) -> None:
     if not chunks:
         return
@@ -150,13 +175,21 @@ def _run_codex_chunks(
     while pending:
         if workers == 1 or len(pending) == 1:
             for ch in pending:
-                run_codex_chunk(chunk=ch, model=model, target_language=target_language)
+                run_codex_chunk(
+                    chunk=ch, model=model, target_language=target_language, prompt_mode=prompt_mode
+                )
             return
 
         failed: list[tuple[CodexChunkPaths, Exception]] = []
         with ThreadPoolExecutor(max_workers=workers) as ex:
             fut_map = {
-                ex.submit(run_codex_chunk, chunk=ch, model=model, target_language=target_language): ch
+                ex.submit(
+                    run_codex_chunk,
+                    chunk=ch,
+                    model=model,
+                    target_language=target_language,
+                    prompt_mode=prompt_mode,
+                ): ch
                 for ch in pending
             }
             for fut in as_completed(fut_map):
@@ -192,6 +225,7 @@ def translate_es_with_codex(
     target_language: str,
     io_tag: str,
     max_workers: int,
+    prompt_mode: str = "translate",
 ) -> dict[str, str]:
     """
     Returns id->translated_text map for all cues provided.
@@ -210,6 +244,7 @@ def translate_es_with_codex(
         model=model,
         target_language=target_language,
         max_workers=max_workers,
+        prompt_mode=prompt_mode,
     )
 
     # Merge.
@@ -237,6 +272,7 @@ def translate_es_with_codex(
                 model=model,
                 target_language=target_language,
                 max_workers=max_workers,
+                prompt_mode=prompt_mode,
             )
             for ch in retry_chunks:
                 merged.update(_parse_jsonl_map(ch.out_jsonl))

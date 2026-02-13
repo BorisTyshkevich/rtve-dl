@@ -129,6 +129,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Recompute auto subtitle delay even if cache exists.",
     )
+    p.add_argument(
+        "--reset-layer",
+        action="append",
+        default=[],
+        help=(
+            "Reset cache layer(s) before processing selected episodes. "
+            "Can be repeated or passed as CSV. "
+            "Allowed: subs-es, subs-en, subs-ru, subs-refs, video, mkv, catalog."
+        ),
+    )
 
     def _cmd_download(a: argparse.Namespace) -> int:
         set_debug(a.debug)
@@ -159,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
             parallel=a.parallel,
             jobs_episodes=a.jobs_episodes,
             jobs_codex_chunks=a.jobs_codex_chunks,
+            reset_layers=a.reset_layer,
         )
 
     p.set_defaults(func=_cmd_download)

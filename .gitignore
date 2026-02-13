@@ -6,6 +6,10 @@ dist/
 build/
 *.egg-info/
 .pytest_cache/
+log/
+sessions/
+skills/
+tt.md
 
 # Project data/cache
 data/

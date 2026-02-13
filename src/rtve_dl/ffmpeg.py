@@ -141,6 +141,7 @@ def mux_mkv(
     out_mkv: Path,
     subs: list[tuple[Path, str, str]],
     subtitle_delay_ms: int = 0,
+    default_subtitle_title: str | None = None,
 ) -> None:
     """
     subs: list of (path, language, title). Codec will be SRT-in-MKV.
@@ -148,7 +149,8 @@ def mux_mkv(
     out_mkv.parent.mkdir(parents=True, exist_ok=True)
     debug(
         "mux_mkv: "
-        f"video={video_path} out={out_mkv} subs={len(subs)} subtitle_delay_ms={subtitle_delay_ms}"
+        f"video={video_path} out={out_mkv} subs={len(subs)} subtitle_delay_ms={subtitle_delay_ms} "
+        f"default_subtitle_title={default_subtitle_title!r}"
     )
     args: list[str] = ["-y", "-i", str(video_path)]
     subtitle_offset_sec = f"{subtitle_delay_ms / 1000.0:.3f}"
@@ -168,6 +170,16 @@ def mux_mkv(
     for idx, (_p, lang, title) in enumerate(subs):
         args += [f"-metadata:s:s:{idx}", f"language={lang}"]
         args += [f"-metadata:s:s:{idx}", f"title={title}"]
+        # Start with no default subtitle flags; we'll mark one below if configured.
+        args += [f"-disposition:s:{idx}", "0"]
+
+    if default_subtitle_title:
+        default_idx = next((idx for idx, (_p, _lang, title) in enumerate(subs) if title == default_subtitle_title), None)
+        if default_idx is None:
+            debug(f"mux_mkv: default subtitle title not found: {default_subtitle_title!r}")
+        else:
+            args += [f"-disposition:s:{default_idx}", "default"]
+            debug(f"mux_mkv: default subtitle index selected: {default_idx}")
 
     args += [str(out_mkv)]
     run_ffmpeg(args)
