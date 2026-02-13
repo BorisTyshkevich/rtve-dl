@@ -17,6 +17,7 @@ from rtve_dl.subs.vtt import parse_vtt
 from rtve_dl.subs.delay_auto import estimate_series_delay_ms
 from rtve_dl.log import debug, error, stage
 from rtve_dl.codex_ru import translate_es_to_ru_with_codex
+from rtve_dl.codex_ru_refs import translate_es_to_ru_refs_with_codex
 from rtve_dl.codex_en import translate_es_to_en_with_codex
 from rtve_dl.asr_whisperx import transcribe_es_to_srt_with_whisperx
 from rtve_dl.asr_mlx import transcribe_es_to_srt_with_mlx_whisper
@@ -98,6 +99,110 @@ def _remove_if_empty(path: Path, *, kind: str) -> None:
         pass
 
 
+_RESET_LAYER_ALLOWED = {
+    "subs-es",
+    "subs-en",
+    "subs-ru",
+    "subs-refs",
+    "video",
+    "mkv",
+    "catalog",
+}
+
+
+def _normalize_reset_layers(raw_layers: list[str] | None) -> set[str]:
+    out: set[str] = set()
+    for raw in raw_layers or []:
+        for part in (raw or "").split(","):
+            v = part.strip().lower()
+            if v:
+                out.add(v)
+    unknown = sorted(v for v in out if v not in _RESET_LAYER_ALLOWED)
+    if unknown:
+        allowed = ", ".join(sorted(_RESET_LAYER_ALLOWED))
+        raise RuntimeError(f"unknown reset layer(s): {', '.join(unknown)}. Allowed: {allowed}")
+    return out
+
+
+def _expand_reset_layers(user_layers: set[str]) -> set[str]:
+    expanded = set(user_layers)
+    changed = True
+    while changed:
+        changed = False
+        prev = set(expanded)
+        if "video" in expanded:
+            expanded.update({"subs-es", "subs-en", "subs-ru", "subs-refs", "mkv"})
+        if "subs-es" in expanded:
+            expanded.update({"subs-en", "subs-ru", "subs-refs", "mkv"})
+        if "subs-en" in expanded:
+            expanded.add("mkv")
+        if "subs-ru" in expanded:
+            expanded.add("mkv")
+        if "subs-refs" in expanded:
+            expanded.add("mkv")
+        changed = expanded != prev
+    return expanded
+
+
+def _safe_unlink(path: Path, *, reason: str) -> None:
+    if not path.exists():
+        return
+    try:
+        path.unlink()
+        debug(f"reset:{reason} removed {path}")
+    except OSError as e:
+        error(f"reset:{reason} failed to remove {path}: {e}")
+
+
+def _safe_unlink_glob(directory: Path, pattern: str, *, reason: str, exclude_prefix: str | None = None) -> None:
+    for p in directory.glob(pattern):
+        if exclude_prefix and p.name.startswith(exclude_prefix):
+            continue
+        _safe_unlink(p, reason=reason)
+
+
+def _reset_catalog_layer(paths: SeriesPaths) -> None:
+    _safe_unlink_glob(paths.tmp, "catalog_*.json", reason="catalog")
+
+
+def _reset_episode_layers(*, paths: SeriesPaths, asset_id: str, base: str, layers: set[str]) -> None:
+    if not layers:
+        return
+
+    if "mkv" in layers:
+        _safe_unlink(paths.out / f"{base}.mkv", reason="mkv")
+        _safe_unlink(paths.out / f"{base}.mkv.partial.mkv", reason="mkv")
+
+    if "video" in layers:
+        _safe_unlink(paths.tmp / f"{base}.mp4", reason="video")
+        _safe_unlink(paths.tmp / f"{base}.mp4.partial.mp4", reason="video")
+
+    if "subs-es" in layers:
+        _safe_unlink(paths.tmp / f"{base}.spa.srt", reason="subs-es")
+        _safe_unlink(paths.tmp / f"{asset_id}.es.vtt", reason="subs-es")
+        _safe_unlink_glob(paths.tmp, f"{base}.en*", reason="subs-es")
+        _safe_unlink_glob(paths.tmp, f"{base}.ru_ref*", reason="subs-es")
+        _safe_unlink_glob(paths.tmp, f"{base}.ru*", reason="subs-es")
+
+    if "subs-en" in layers:
+        _safe_unlink(paths.tmp / f"{base}.eng.srt", reason="subs-en")
+        _safe_unlink(paths.tmp / f"{asset_id}.en.vtt", reason="subs-en")
+        _safe_unlink_glob(paths.tmp, f"{base}.en*", reason="subs-en")
+
+    if "subs-ru" in layers:
+        _safe_unlink(paths.tmp / f"{base}.rus.srt", reason="subs-ru")
+        _safe_unlink_glob(
+            paths.tmp,
+            f"{base}.ru*",
+            reason="subs-ru",
+            exclude_prefix=f"{base}.ru_ref",
+        )
+
+    if "subs-refs" in layers:
+        _safe_unlink(paths.tmp / f"{base}.spa_rus.srt", reason="subs-refs")
+        _safe_unlink_glob(paths.tmp, f"{base}.ru_ref*", reason="subs-refs")
+
+
 def _download_sub_vtt(http: HttpClient, url: str, out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     _remove_if_empty(out_path, kind="vtt")
@@ -133,7 +238,7 @@ def _collect_local_subs_for_mux(
     if with_ru:
         if not _is_nonempty_file(srt_ru) or not _is_nonempty_file(srt_bi):
             return None
-        subs.extend([(srt_ru, "rus", "Russian"), (srt_bi, "rus", "Spanish|Russian")])
+        subs.extend([(srt_ru, "rus", "Russian"), (srt_bi, "spa", "Spanish|RU refs")])
     return subs
 
 
@@ -183,10 +288,17 @@ def download_selector(
     parallel: bool,
     jobs_episodes: int,
     jobs_codex_chunks: int,
+    reset_layers: list[str] | None = None,
 ) -> int:
     http = HttpClient()
     paths = _paths_for(series_url, series_slug)
     _ensure_dirs(paths)
+    user_reset_layers = _normalize_reset_layers(reset_layers)
+    active_reset_layers = _expand_reset_layers(user_reset_layers)
+    if active_reset_layers:
+        debug(f"active reset layers: {', '.join(sorted(active_reset_layers))}")
+    if "catalog" in active_reset_layers:
+        _reset_catalog_layer(paths)
     with stage("catalog"):
         assets = list_assets_for_selector(series_url, selector, http=http, cache_dir=paths.tmp)
 
@@ -234,6 +346,7 @@ def download_selector(
         try:
             _ep_log(ep_tag, "start")
             base = base_guess
+            _reset_episode_layers(paths=paths, asset_id=a.asset_id, base=base, layers=active_reset_layers)
             out_mkv = paths.out / f"{base}.mkv"
             mp4_path = paths.tmp / f"{base}.mp4"
             srt_es = paths.tmp / f"{base}.spa.srt"
@@ -261,6 +374,7 @@ def download_selector(
                         out_mkv=tmp_out,
                         subs=local_subs,
                         subtitle_delay_ms=effective_subtitle_delay_ms,
+                        default_subtitle_title="Spanish|RU refs",
                     )
                     tmp_out.replace(out_mkv)
                 _ep_log(ep_tag, f"done ({time.time() - t0:.1f}s)")
@@ -274,6 +388,8 @@ def download_selector(
             title = a.title or resolved.title or a.asset_id
             base = f"S{season_num:02d}E{episode_num:02d}_{_slug_title(title)}"
             ep_tag = base
+            if base != base_guess:
+                _reset_episode_layers(paths=paths, asset_id=a.asset_id, base=base, layers=active_reset_layers)
             _ep_log(ep_tag, "resolved")
 
             out_mkv = paths.out / f"{base}.mkv"
@@ -450,8 +566,13 @@ def download_selector(
                     srt_bi = paths.tmp / f"{base}.spa_rus.srt"
                     _remove_if_empty(srt_ru, kind="srt")
                     _remove_if_empty(srt_bi, kind="srt")
-                    if not _is_nonempty_file(srt_ru) or not _is_nonempty_file(srt_bi):
-                        cue_tasks = [(f"{i}", (c.text or "").strip()) for i, c in enumerate(es_cues) if (c.text or "").strip()]
+                    cue_tasks = [
+                        (f"{i}", (c.text or "").strip())
+                        for i, c in enumerate(es_cues)
+                        if (c.text or "").strip()
+                    ]
+
+                    if not _is_nonempty_file(srt_ru):
                         base_path = paths.tmp / f"{base}.ru"
                         ru_map = (
                             translate_es_to_ru_with_codex(
@@ -472,22 +593,39 @@ def download_selector(
                             Cue(start_ms=c.start_ms, end_ms=c.end_ms, text=ru_map.get(f"{i}", ""))
                             for i, c in enumerate(es_cues)
                         ]
-                        bi_cues = [
+                        srt_ru.write_text(cues_to_srt(ru_cues), encoding="utf-8")
+                    else:
+                        debug(f"cache hit srt: {srt_ru}")
+
+                    if not _is_nonempty_file(srt_bi):
+                        refs_base_path = paths.tmp / f"{base}.ru_ref"
+                        refs_map = (
+                            translate_es_to_ru_refs_with_codex(
+                                cues=cue_tasks,
+                                base_path=refs_base_path,
+                                chunk_size_cues=codex_chunk_cues,
+                                model=codex_model,
+                                resume=True,
+                                max_workers=jobs_codex_chunks,
+                            )
+                            if cue_tasks
+                            else {}
+                        )
+
+                        from rtve_dl.subs.vtt import Cue
+
+                        ref_cues = [
                             Cue(
                                 start_ms=c.start_ms,
                                 end_ms=c.end_ms,
-                                text=(c.text or "").strip() + "\n" + (ru_map.get(f"{i}", "") or "").strip(),
+                                text=refs_map.get(f"{i}", (c.text or "").strip()),
                             )
                             for i, c in enumerate(es_cues)
                         ]
-                        if not _is_nonempty_file(srt_ru):
-                            srt_ru.write_text(cues_to_srt(ru_cues), encoding="utf-8")
-                        if not _is_nonempty_file(srt_bi):
-                            srt_bi.write_text(cues_to_srt(bi_cues), encoding="utf-8")
+                        srt_bi.write_text(cues_to_srt(ref_cues), encoding="utf-8")
                     else:
-                        debug(f"cache hit srt: {srt_ru}")
                         debug(f"cache hit srt: {srt_bi}")
-                    return [(srt_ru, "rus", "Russian"), (srt_bi, "rus", "Spanish|Russian")]
+                    return [(srt_ru, "rus", "Russian"), (srt_bi, "spa", "Spanish|RU refs")]
 
             _ep_log(ep_tag, "video+es")
             if parallel:
@@ -549,6 +687,7 @@ def download_selector(
                     out_mkv=tmp_out,
                     subs=subs,
                     subtitle_delay_ms=effective_subtitle_delay_ms,
+                    default_subtitle_title="Spanish|RU refs",
                 )
                 tmp_out.replace(out_mkv)
             _ep_log(ep_tag, f"done ({time.time() - t0:.1f}s)")
