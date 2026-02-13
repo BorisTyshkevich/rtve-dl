@@ -210,6 +210,7 @@ def _reset_selector_layers(*, paths: SeriesPaths, assets: list[SeriesAsset], lay
 
         if "subs-ru" in layers:
             _safe_unlink_glob(paths.tmp, f"{prefix}*.rus.srt", reason="subs-ru")
+            _safe_unlink_glob(paths.tmp, f"{prefix}*.spa_rus_full.srt", reason="subs-ru")
             _safe_unlink_glob(paths.tmp, f"{prefix}*.ru*", reason="subs-ru", exclude_contains=".ru_ref")
 
         if "subs-refs" in layers:
@@ -237,10 +238,12 @@ def _collect_local_subs_for_mux(
     srt_en = paths.tmp / f"{base}.eng.srt"
     srt_ru = paths.tmp / f"{base}.rus.srt"
     srt_bi = paths.tmp / f"{base}.spa_rus.srt"
+    srt_bi_full = paths.tmp / f"{base}.spa_rus_full.srt"
     _remove_if_empty(srt_es, kind="srt")
     _remove_if_empty(srt_en, kind="srt")
     _remove_if_empty(srt_ru, kind="srt")
     _remove_if_empty(srt_bi, kind="srt")
+    _remove_if_empty(srt_bi_full, kind="srt")
 
     if not _is_nonempty_file(srt_es):
         return None
@@ -251,9 +254,15 @@ def _collect_local_subs_for_mux(
             return None
         subs.append((srt_en, "eng", "English"))
     if with_ru:
-        if not _is_nonempty_file(srt_ru) or not _is_nonempty_file(srt_bi):
+        if not _is_nonempty_file(srt_ru) or not _is_nonempty_file(srt_bi) or not _is_nonempty_file(srt_bi_full):
             return None
-        subs.extend([(srt_ru, "rus", "Russian"), (srt_bi, "spa", "Spanish|RU refs")])
+        subs.extend(
+            [
+                (srt_ru, "rus", "Russian"),
+                (srt_bi, "spa", "Spanish|RU refs"),
+                (srt_bi_full, "spa", "Spanish|Russian (Full)"),
+            ]
+        )
     return subs
 
 
@@ -577,13 +586,16 @@ def download_selector(
                 with stage(f"build:srt:ru:{a.asset_id}"):
                     srt_ru = paths.tmp / f"{base}.rus.srt"
                     srt_bi = paths.tmp / f"{base}.spa_rus.srt"
+                    srt_bi_full = paths.tmp / f"{base}.spa_rus_full.srt"
                     _remove_if_empty(srt_ru, kind="srt")
                     _remove_if_empty(srt_bi, kind="srt")
+                    _remove_if_empty(srt_bi_full, kind="srt")
                     cue_tasks = [
                         (f"{i}", (c.text or "").strip())
                         for i, c in enumerate(es_cues)
                         if (c.text or "").strip()
                     ]
+                    ru_map: dict[str, str] | None = None
 
                     if not _is_nonempty_file(srt_ru):
                         base_path = paths.tmp / f"{base}.ru"
@@ -638,7 +650,31 @@ def download_selector(
                         srt_bi.write_text(cues_to_srt(ref_cues), encoding="utf-8")
                     else:
                         debug(f"cache hit srt: {srt_bi}")
-                    return [(srt_ru, "rus", "Russian"), (srt_bi, "spa", "Spanish|RU refs")]
+
+                    if not _is_nonempty_file(srt_bi_full):
+                        if ru_map is None:
+                            ru_cues_cached = parse_srt(srt_ru.read_text(encoding="utf-8"))
+                            ru_map = {f"{i}": (c.text or "").strip() for i, c in enumerate(ru_cues_cached)}
+
+                        from rtve_dl.subs.vtt import Cue
+
+                        bi_full_cues = [
+                            Cue(
+                                start_ms=c.start_ms,
+                                end_ms=c.end_ms,
+                                text=((c.text or "").strip() + "\n" + (ru_map.get(f"{i}", "") or "").strip()).strip(),
+                            )
+                            for i, c in enumerate(es_cues)
+                        ]
+                        srt_bi_full.write_text(cues_to_srt(bi_full_cues), encoding="utf-8")
+                    else:
+                        debug(f"cache hit srt: {srt_bi_full}")
+
+                    return [
+                        (srt_ru, "rus", "Russian"),
+                        (srt_bi, "spa", "Spanish|RU refs"),
+                        (srt_bi_full, "spa", "Spanish|Russian (Full)"),
+                    ]
 
             _ep_log(ep_tag, "video+es")
             if parallel:

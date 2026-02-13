@@ -41,6 +41,7 @@ For an episode base name `SxxExx_<title>` and `asset_id`:
   - `tmp/<slug>/<base>.eng.srt`
   - `tmp/<slug>/<base>.rus.srt`
   - `tmp/<slug>/<base>.spa_rus.srt`
+  - `tmp/<slug>/<base>.spa_rus_full.srt`
 
 - Codex EN chunk cache (ES->EN fallback)
   - `tmp/<slug>/<base>.en*.jsonl`
@@ -128,6 +129,7 @@ Episode layers:
 
 - `subs-ru`
   - `tmp/<slug>/SxxExx_*.rus.srt` for selected episodes
+  - `tmp/<slug>/SxxExx_*.spa_rus_full.srt` for selected episodes
   - RU full Codex chunk caches (`SxxExx_*.ru*`, excluding `*.ru_ref*`)
 
 - `subs-refs`
