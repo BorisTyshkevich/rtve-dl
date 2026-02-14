@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "updated_at": "2026-02-14T00:00:00Z",
+  "normalization": {
+    "trim": true,
+    "collapse_whitespace": true,
+    "normalize_quotes": true,
+    "normalize_ellipsis": true,
+    "lowercase": true
+  },
+  "entries": {
+    "deja tus refranes.": {
+      "ru_full": "Оставь свои пословицы.",
+      "ru_refs": "пословицы",
+      "en_mt": "Drop your sayings.",
+      "enabled": true,
+      "notes": "opening song"
+    }
+  }
+}

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.2.2
+
+- Codex prompt templates moved to package files:
+  - `src/rtve_dl/prompts/ru_full.md`
+  - `src/rtve_dl/prompts/ru_refs.md`
+  - `src/rtve_dl/prompts/en_mt.md`
+- Switched Codex payload protocol to compact TSV while keeping JSONL as durable cache.
+- Changed `ru_refs` generation:
+  - Codex now returns only compact Russian gloss strings per cue.
+  - `Spanish|RU refs` SRT is assembled programmatically from ES cue + RU glosses.
+- Added optional static global phrase cache:
+  - `data/global_phrase_cache.json` with normalized exact match keys.
+  - Applied before chunking for `ru_full`, `ru_refs`, and `en_mt`.
+- Added chunk-level SQLite telemetry:
+  - `tmp/<slug>/telemetry.sqlite` with run/episode/chunk records.
+  - per-chunk token usage (`total_tokens`) parsed from Codex output when available.
+  - usage quality flags: `usage_source`, `usage_parse_ok`.
+- Moved telemetry SQL schema into template file:
+  - `sql/schema.sql` (single source of truth for DB bootstrap)
+- Added SQL report pack:
+  - `sql/reports.sql` for aggregate usage/error/efficiency analytics.
+- Updated Codex defaults:
+  - primary model `gpt-5.1-codex-mini`
+  - fallback model `gpt-5.3-codex` for failed chunks only
+  - default chunk size `500` (refs internally capped to `200`)
+- Hardened Codex output handling:
+  - empty/unparseable chunk output now fails fast with `.log` reference.
+
 ## 0.2.1
 
 - Changed `--reset-layer` execution model to selector-wide preflight:

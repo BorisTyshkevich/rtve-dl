@@ -21,6 +21,11 @@ Per episode MKV can include:
 - `ffmpeg` on PATH
 - `codex` CLI on PATH (authenticated for non-interactive `codex exec`)
 
+Codex translation defaults:
+- primary model: `gpt-5.1-codex-mini`
+- fallback model (failed chunks only): `gpt-5.3-codex`
+- chunk size: `500` cues (`ru_refs` is internally capped to `200`)
+
 Optional ASR fallback when ES subtitles are missing:
 - default backend: `mlx-whisper`
 - optional backend: `whisperx`
@@ -63,6 +68,20 @@ Debug + parallel (parallel is enabled by default):
 
 ```bash
 rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 --series-slug cuentame --debug --parallel
+```
+
+## Codex Chunk Concurrency
+
+`--jobs-codex-chunks` controls how many Codex chunk requests run in parallel inside one translation task.
+
+- `1`: sequential chunks (more stable, lower chance of auth/rate-limit storms)
+- `2-4`: faster, but higher risk of chunk failures under account limits
+
+Example (stable mode):
+
+```bash
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S2 \
+  --series-slug cuentameT8 --jobs-codex-chunks 1
 ```
 
 ## Subtitle Delay
@@ -164,6 +183,12 @@ rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \
 ## Notes
 
 - Re-running `download` is safe and cache-based.
+- Global static phrase cache is loaded from `data/global_phrase_cache.json` (if present).
+  Start from `global_phrase_cache.example.json`.
+- Codex chunk telemetry is written to `tmp/<slug>/telemetry.sqlite`.
+- SQL artifacts:
+  - schema bootstrap: `sql/schema.sql`
+  - analytics queries: `sql/reports.sql`
 - The tool does not bypass DRM.
 - Full cache internals and reset semantics are documented in `caches.md`.
 

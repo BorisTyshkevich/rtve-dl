@@ -261,7 +261,9 @@ def _save_cache(path: Path, payload: dict) -> None:
 def estimate_series_delay_ms(
     *,
     assets: list[SeriesAsset],
-    tmp_dir: Path,
+    mp4_dir: Path,
+    srt_dir: Path,
+    cache_dir: Path,
     out_dir: Path,
     scope: str,
     samples: int,
@@ -275,7 +277,7 @@ def estimate_series_delay_ms(
     asr_vad_method: str,
     asr_mlx_model: str,
 ) -> int:
-    cache_path = tmp_dir / "subtitle_delay.auto.json"
+    cache_path = cache_dir / "subtitle_delay.auto.json"
     if not refresh:
         cached = _load_cache(cache_path)
         if cached and isinstance(cached.get("delay_ms"), int):
@@ -285,8 +287,8 @@ def estimate_series_delay_ms(
     local_candidates: list[tuple[str, Path, Path]] = []
     for a in assets:
         base = _base_from_asset(a)
-        mp4 = tmp_dir / f"{base}.mp4"
-        srt = tmp_dir / f"{base}.spa.srt"
+        mp4 = mp4_dir / f"{base}.mp4"
+        srt = srt_dir / f"{base}.spa.srt"
         mkv = out_dir / f"{base}.mkv"
         if mp4.exists() and srt.exists() and mp4.stat().st_size > 0 and srt.stat().st_size > 0:
             local_candidates.append((base, mp4, srt))
@@ -314,7 +316,7 @@ def estimate_series_delay_ms(
                 asr_est = _estimate_by_asr(
                     cues=cues,
                     mp4_path=mp4,
-                    tmp_dir=tmp_dir,
+                    tmp_dir=srt_dir,
                     base=base,
                     asr_backend=asr_backend,
                     asr_model=asr_model,
@@ -372,4 +374,3 @@ def estimate_series_delay_ms(
         },
     )
     return med
-

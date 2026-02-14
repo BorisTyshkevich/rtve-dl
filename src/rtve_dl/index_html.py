@@ -114,10 +114,10 @@ def _mkv_rows(out_dir: Path) -> list[_Row]:
     return rows
 
 
-def _latest_catalog_items(tmp_dir: Path | None) -> list[dict]:
-    if tmp_dir is None or not tmp_dir.exists():
+def _latest_catalog_items(meta_dir: Path | None) -> list[dict]:
+    if meta_dir is None or not meta_dir.exists():
         return []
-    files = sorted(tmp_dir.glob("catalog_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    files = sorted(meta_dir.glob("catalog_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     for p in files:
         try:
             obj = json.loads(p.read_text(encoding="utf-8"))
@@ -158,11 +158,11 @@ def _row_asset_id(row: _Row) -> str:
     return ""
 
 
-def _cache_file(tmp_dir: Path | None) -> Path | None:
-    if tmp_dir is None:
+def _cache_file(meta_dir: Path | None) -> Path | None:
+    if meta_dir is None:
         return None
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    return tmp_dir / "index_meta_ru.json"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    return meta_dir / "index_meta_ru.json"
 
 
 def _load_ru_cache(path: Path | None) -> dict:
@@ -195,12 +195,13 @@ def _text_hash(s: str) -> str:
 def _translate_ru_for_cards(
     cards: list[_CardMeta],
     *,
-    tmp_dir: Path | None,
+    meta_dir: Path | None,
+    codex_dir: Path | None,
     codex_model: str | None,
     codex_chunk_cues: int,
     jobs_codex_chunks: int,
 ) -> dict[str, tuple[str, str]]:
-    path = _cache_file(tmp_dir)
+    path = _cache_file(meta_dir)
     cache = _load_ru_cache(path)
     cache_items: dict = cache["items"]
 
@@ -223,12 +224,13 @@ def _translate_ru_for_cards(
 
     if cues:
         try:
-            base_path = (tmp_dir or Path("tmp")) / "index_meta_ru"
+            base_path = (codex_dir or Path("tmp")) / "index_meta_ru"
             ru_map = translate_es_to_ru_with_codex(
                 cues=cues,
                 base_path=base_path,
                 chunk_size_cues=max(1, min(codex_chunk_cues, 50)),
                 model=codex_model,
+                fallback_model="gpt-5.3-codex" if codex_model == "gpt-5.1-codex-mini" else None,
                 resume=True,
                 max_workers=max(1, jobs_codex_chunks),
             )
@@ -261,6 +263,7 @@ def build_slug_index(
     out_dir: Path,
     *,
     tmp_dir: Path | None = None,
+    codex_dir: Path | None = None,
     codex_model: str | None = None,
     codex_chunk_cues: int = 400,
     jobs_codex_chunks: int = 4,
@@ -303,7 +306,8 @@ def build_slug_index(
 
     ru_map = _translate_ru_for_cards(
         cards,
-        tmp_dir=tmp_dir,
+        meta_dir=tmp_dir,
+        codex_dir=codex_dir,
         codex_model=codex_model,
         codex_chunk_cues=codex_chunk_cues,
         jobs_codex_chunks=jobs_codex_chunks,

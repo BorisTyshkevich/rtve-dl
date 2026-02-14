@@ -19,9 +19,13 @@ from rtve_dl.log import debug, error, stage
 from rtve_dl.codex_ru import translate_es_to_ru_with_codex
 from rtve_dl.codex_ru_refs import translate_es_to_ru_refs_with_codex
 from rtve_dl.codex_en import translate_es_to_en_with_codex
+from rtve_dl.codex_batch import CodexExecutionContext
 from rtve_dl.asr_whisperx import transcribe_es_to_srt_with_whisperx
 from rtve_dl.asr_mlx import transcribe_es_to_srt_with_mlx_whisper
 from rtve_dl.index_html import build_slug_index
+from rtve_dl.global_phrase_cache import GlobalPhraseCache, load_global_phrase_cache
+from rtve_dl.telemetry import TelemetryDB
+from rtve_dl.tmp_layout import TmpLayout, migrate_tmp_slug_layout
 
 
 def _slugify(s: str) -> str:
@@ -62,21 +66,25 @@ class SeriesPaths:
     slug: str
     out: Path
     tmp: Path
+    layout: TmpLayout
 
 
 def _paths_for(series_url: str, series_slug: str | None) -> SeriesPaths:
     slug = series_slug or _slugify(series_url)
     out_root = Path("data") / slug
     tmp_root = Path("tmp") / slug
+    layout = TmpLayout.for_slug(tmp_root)
     return SeriesPaths(
         slug=slug,
         out=out_root,
         tmp=tmp_root,
+        layout=layout,
     )
 
 
 def _ensure_dirs(p: SeriesPaths) -> None:
-    p.tmp.mkdir(parents=True, exist_ok=True)
+    p.layout.ensure_dirs()
+    migrate_tmp_slug_layout(p.layout)
     p.out.mkdir(parents=True, exist_ok=True)
 
 
@@ -171,7 +179,7 @@ def _safe_unlink_glob(
 
 
 def _reset_catalog_layer(paths: SeriesPaths) -> None:
-    _safe_unlink_glob(paths.tmp, "catalog_*.json", reason="catalog")
+    _safe_unlink_glob(paths.layout.meta, "catalog_*.json", reason="catalog")
 
 
 def _episode_prefix(a: SeriesAsset) -> str:
@@ -193,29 +201,29 @@ def _reset_selector_layers(*, paths: SeriesPaths, assets: list[SeriesAsset], lay
             _safe_unlink_glob(paths.out, f"{prefix}*.mkv.partial.mkv", reason="mkv")
 
         if "video" in layers:
-            _safe_unlink_glob(paths.tmp, f"{prefix}*.mp4", reason="video")
-            _safe_unlink_glob(paths.tmp, f"{prefix}*.mp4.partial.mp4", reason="video")
+            _safe_unlink_glob(paths.layout.mp4, f"{prefix}*.mp4", reason="video")
+            _safe_unlink_glob(paths.layout.mp4, f"{prefix}*.mp4.partial.mp4", reason="video")
 
         if "subs-es" in layers:
-            _safe_unlink_glob(paths.tmp, f"{prefix}*.spa.srt", reason="subs-es")
-            _safe_unlink(paths.tmp / f"{asset_id}.es.vtt", reason="subs-es")
-            _safe_unlink_glob(paths.tmp, f"{prefix}*.en*", reason="subs-es")
-            _safe_unlink_glob(paths.tmp, f"{prefix}*.ru_ref*", reason="subs-es")
-            _safe_unlink_glob(paths.tmp, f"{prefix}*.ru*", reason="subs-es")
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa.srt", reason="subs-es")
+            _safe_unlink(paths.layout.vtt_es_file(asset_id), reason="subs-es")
+            _safe_unlink_glob(paths.layout.codex_en, f"{prefix}*.en*", reason="subs-es")
+            _safe_unlink_glob(paths.layout.codex_ru_ref, f"{prefix}*.ru_ref*", reason="subs-es")
+            _safe_unlink_glob(paths.layout.codex_ru, f"{prefix}*.ru*", reason="subs-es")
 
         if "subs-en" in layers:
-            _safe_unlink_glob(paths.tmp, f"{prefix}*.eng.srt", reason="subs-en")
-            _safe_unlink(paths.tmp / f"{asset_id}.en.vtt", reason="subs-en")
-            _safe_unlink_glob(paths.tmp, f"{prefix}*.en*", reason="subs-en")
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.eng.srt", reason="subs-en")
+            _safe_unlink(paths.layout.vtt_en_file(asset_id), reason="subs-en")
+            _safe_unlink_glob(paths.layout.codex_en, f"{prefix}*.en*", reason="subs-en")
 
         if "subs-ru" in layers:
-            _safe_unlink_glob(paths.tmp, f"{prefix}*.rus.srt", reason="subs-ru")
-            _safe_unlink_glob(paths.tmp, f"{prefix}*.spa_rus_full.srt", reason="subs-ru")
-            _safe_unlink_glob(paths.tmp, f"{prefix}*.ru*", reason="subs-ru", exclude_contains=".ru_ref")
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.rus.srt", reason="subs-ru")
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa_rus_full.srt", reason="subs-ru")
+            _safe_unlink_glob(paths.layout.codex_ru, f"{prefix}*.ru*", reason="subs-ru")
 
         if "subs-refs" in layers:
-            _safe_unlink_glob(paths.tmp, f"{prefix}*.spa_rus.srt", reason="subs-refs")
-            _safe_unlink_glob(paths.tmp, f"{prefix}*.ru_ref*", reason="subs-refs")
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa_rus.srt", reason="subs-refs")
+            _safe_unlink_glob(paths.layout.codex_ru_ref, f"{prefix}*.ru_ref*", reason="subs-refs")
     debug("reset:preflight done")
 
 
@@ -234,11 +242,11 @@ def _collect_local_subs_for_mux(
     with_ru: bool,
     translate_en_if_missing: bool,
 ) -> list[tuple[Path, str, str]] | None:
-    srt_es = paths.tmp / f"{base}.spa.srt"
-    srt_en = paths.tmp / f"{base}.eng.srt"
-    srt_ru = paths.tmp / f"{base}.rus.srt"
-    srt_bi = paths.tmp / f"{base}.spa_rus.srt"
-    srt_bi_full = paths.tmp / f"{base}.spa_rus_full.srt"
+    srt_es = paths.layout.srt_es_file(base)
+    srt_en = paths.layout.srt_en_file(base)
+    srt_ru = paths.layout.srt_ru_file(base)
+    srt_bi = paths.layout.srt_refs_file(base)
+    srt_bi_full = paths.layout.srt_bi_full_file(base)
     _remove_if_empty(srt_es, kind="srt")
     _remove_if_empty(srt_en, kind="srt")
     _remove_if_empty(srt_ru, kind="srt")
@@ -284,6 +292,14 @@ def _mp4_matches_es_srt(mp4_path: Path, srt_es_path: Path, *, min_ratio: float =
     return v_dur >= (s_dur * min_ratio)
 
 
+def _compose_ref_text(es_text: str, ru_refs: str) -> str:
+    es = (es_text or "").strip()
+    refs = (ru_refs or "").strip()
+    if not refs:
+        return es
+    return f"{es}\n({refs})" if es else f"({refs})"
+
+
 def download_selector(
     series_url: str,
     selector: str,
@@ -317,6 +333,24 @@ def download_selector(
     http = HttpClient()
     paths = _paths_for(series_url, series_slug)
     _ensure_dirs(paths)
+    codex_primary_model = codex_model or "gpt-5.1-codex-mini"
+    codex_fallback_model = "gpt-5.3-codex" if codex_primary_model == "gpt-5.1-codex-mini" else None
+    global_cache: GlobalPhraseCache = load_global_phrase_cache(Path("data") / "global_phrase_cache.json")
+    telemetry = TelemetryDB(paths.layout.telemetry_db())
+    run_id = telemetry.start_run(
+        slug=paths.slug,
+        selector=selector,
+        cli_args={
+            "series_url": series_url,
+            "selector": selector,
+            "series_slug": series_slug,
+            "parallel": parallel,
+            "codex_model": codex_primary_model,
+            "codex_chunk_cues": codex_chunk_cues,
+            "jobs_codex_chunks": jobs_codex_chunks,
+        },
+        app_version="0.2.x",
+    )
     user_reset_layers = _normalize_reset_layers(reset_layers)
     active_reset_layers = _expand_reset_layers(user_reset_layers)
     if active_reset_layers:
@@ -324,7 +358,7 @@ def download_selector(
     if "catalog" in active_reset_layers:
         _reset_catalog_layer(paths)
     with stage("catalog"):
-        assets = list_assets_for_selector(series_url, selector, http=http, cache_dir=paths.tmp)
+        assets = list_assets_for_selector(series_url, selector, http=http, cache_dir=paths.layout.meta)
     _reset_selector_layers(paths=paths, assets=assets, layers={x for x in active_reset_layers if x != "catalog"})
 
     effective_subtitle_delay_ms = subtitle_delay_ms
@@ -332,7 +366,9 @@ def download_selector(
         with stage("subtitle-delay:auto"):
             effective_subtitle_delay_ms = estimate_series_delay_ms(
                 assets=assets,
-                tmp_dir=paths.tmp,
+                mp4_dir=paths.layout.mp4,
+                srt_dir=paths.layout.srt,
+                cache_dir=paths.layout.meta,
                 out_dir=paths.out,
                 scope=subtitle_delay_auto_scope,
                 samples=max(1, subtitle_delay_auto_samples),
@@ -368,16 +404,18 @@ def download_selector(
         episode_num = a.episode or 0
         base_guess = f"S{season_num:02d}E{episode_num:02d}_{_slug_title(title_guess)}"
         ep_tag = base_guess
+        telemetry.start_episode(run_id=run_id, episode_id=a.asset_id, base_name=base_guess)
         try:
             _ep_log(ep_tag, "start")
             base = base_guess
             out_mkv = paths.out / f"{base}.mkv"
-            mp4_path = paths.tmp / f"{base}.mp4"
-            srt_es = paths.tmp / f"{base}.spa.srt"
+            mp4_path = paths.layout.mp4_file(base)
+            srt_es = paths.layout.srt_es_file(base)
             _remove_if_empty(out_mkv, kind="mkv")
             if out_mkv.exists():
                 debug(f"skip mkv exists (pre-resolve): {out_mkv}")
                 _ep_log(ep_tag, "done (cached mkv)")
+                telemetry.end_episode(run_id=run_id, episode_id=a.asset_id, status="ok")
                 print(out_mkv)
                 return None
 
@@ -402,6 +440,7 @@ def download_selector(
                     )
                     tmp_out.replace(out_mkv)
                 _ep_log(ep_tag, f"done ({time.time() - t0:.1f}s)")
+                telemetry.end_episode(run_id=run_id, episode_id=a.asset_id, status="ok")
                 print(out_mkv)
                 return None
 
@@ -415,12 +454,13 @@ def download_selector(
             _ep_log(ep_tag, "resolved")
 
             out_mkv = paths.out / f"{base}.mkv"
-            mp4_path = paths.tmp / f"{base}.mp4"
-            srt_es = paths.tmp / f"{base}.spa.srt"
+            mp4_path = paths.layout.mp4_file(base)
+            srt_es = paths.layout.srt_es_file(base)
             _remove_if_empty(out_mkv, kind="mkv")
             if out_mkv.exists():
                 debug(f"skip mkv exists: {out_mkv}")
                 _ep_log(ep_tag, "done (cached mkv)")
+                telemetry.end_episode(run_id=run_id, episode_id=a.asset_id, status="ok")
                 print(out_mkv)
                 return None
 
@@ -452,7 +492,7 @@ def download_selector(
             def _task_es() -> list:
                 if resolved.subtitles_es_vtt:
                     with stage(f"download:subs:es:{a.asset_id}"):
-                        es_vtt = paths.tmp / f"{a.asset_id}.es.vtt"
+                        es_vtt = paths.layout.vtt_es_file(a.asset_id)
                         _download_sub_vtt(http, resolved.subtitles_es_vtt, es_vtt)
                     with stage(f"build:srt:es:{a.asset_id}"):
                         _remove_if_empty(srt_es, kind="srt")
@@ -532,11 +572,11 @@ def download_selector(
             def _task_en() -> tuple[Path, str, str] | None:
                 if resolved.subtitles_en_vtt:
                     with stage(f"download:subs:en:{a.asset_id}"):
-                        _download_sub_vtt(http, resolved.subtitles_en_vtt, paths.tmp / f"{a.asset_id}.en.vtt")
+                        _download_sub_vtt(http, resolved.subtitles_en_vtt, paths.layout.vtt_en_file(a.asset_id))
                     with stage(f"build:srt:en:{a.asset_id}"):
-                        en_vtt = paths.tmp / f"{a.asset_id}.en.vtt"
+                        en_vtt = paths.layout.vtt_en_file(a.asset_id)
                         en_cues = parse_vtt(en_vtt.read_text(encoding="utf-8"))
-                        srt_en = paths.tmp / f"{base}.eng.srt"
+                        srt_en = paths.layout.srt_en_file(base)
                         _remove_if_empty(srt_en, kind="srt")
                         if not _is_nonempty_file(srt_en):
                             srt_en.write_text(cues_to_srt(en_cues), encoding="utf-8")
@@ -549,23 +589,32 @@ def download_selector(
 
                 # Fallback: machine-translate ES -> EN using Codex chunks.
                 with stage(f"build:srt:en_mt:{a.asset_id}"):
-                    srt_en = paths.tmp / f"{base}.eng.srt"
+                    srt_en = paths.layout.srt_en_file(base)
                     _remove_if_empty(srt_en, kind="srt")
                     if not _is_nonempty_file(srt_en):
                         cue_tasks = [(f"{i}", (c.text or "").strip()) for i, c in enumerate(es_cues) if (c.text or "").strip()]
-                        base_path = paths.tmp / f"{base}.en"
-                        en_map = (
-                            translate_es_to_en_with_codex(
-                                cues=cue_tasks,
-                                base_path=base_path,
-                                chunk_size_cues=codex_chunk_cues,
-                                model=codex_model,
-                                resume=True,
-                                max_workers=jobs_codex_chunks,
+                        en_cached, en_missing = global_cache.split_for_track(cues=cue_tasks, track="en_mt")
+                        base_path = paths.layout.codex_base(base, "en")
+                        en_map = dict(en_cached)
+                        if en_missing:
+                            en_map.update(
+                                translate_es_to_en_with_codex(
+                                    cues=en_missing,
+                                    base_path=base_path,
+                                    chunk_size_cues=codex_chunk_cues,
+                                    model=codex_primary_model,
+                                    fallback_model=codex_fallback_model,
+                                    resume=True,
+                                    max_workers=jobs_codex_chunks,
+                                    context=CodexExecutionContext(
+                                        telemetry=telemetry,
+                                        run_id=run_id,
+                                        episode_id=a.asset_id,
+                                        track_type="en_mt",
+                                        chunk_size=codex_chunk_cues,
+                                    ),
+                                )
                             )
-                            if cue_tasks
-                            else {}
-                        )
 
                         from rtve_dl.subs.vtt import Cue
 
@@ -584,9 +633,9 @@ def download_selector(
                         raise RuntimeError("RU subtitles are required but disabled (--no-with-ru)")
                     return []
                 with stage(f"build:srt:ru:{a.asset_id}"):
-                    srt_ru = paths.tmp / f"{base}.rus.srt"
-                    srt_bi = paths.tmp / f"{base}.spa_rus.srt"
-                    srt_bi_full = paths.tmp / f"{base}.spa_rus_full.srt"
+                    srt_ru = paths.layout.srt_ru_file(base)
+                    srt_bi = paths.layout.srt_refs_file(base)
+                    srt_bi_full = paths.layout.srt_bi_full_file(base)
                     _remove_if_empty(srt_ru, kind="srt")
                     _remove_if_empty(srt_bi, kind="srt")
                     _remove_if_empty(srt_bi_full, kind="srt")
@@ -598,19 +647,28 @@ def download_selector(
                     ru_map: dict[str, str] | None = None
 
                     if not _is_nonempty_file(srt_ru):
-                        base_path = paths.tmp / f"{base}.ru"
-                        ru_map = (
-                            translate_es_to_ru_with_codex(
-                                cues=cue_tasks,
-                                base_path=base_path,
-                                chunk_size_cues=codex_chunk_cues,
-                                model=codex_model,
-                                resume=True,
-                                max_workers=jobs_codex_chunks,
+                        ru_cached, ru_missing = global_cache.split_for_track(cues=cue_tasks, track="ru_full")
+                        base_path = paths.layout.codex_base(base, "ru")
+                        ru_map = dict(ru_cached)
+                        if ru_missing:
+                            ru_map.update(
+                                translate_es_to_ru_with_codex(
+                                    cues=ru_missing,
+                                    base_path=base_path,
+                                    chunk_size_cues=codex_chunk_cues,
+                                    model=codex_primary_model,
+                                    fallback_model=codex_fallback_model,
+                                    resume=True,
+                                    max_workers=jobs_codex_chunks,
+                                    context=CodexExecutionContext(
+                                        telemetry=telemetry,
+                                        run_id=run_id,
+                                        episode_id=a.asset_id,
+                                        track_type="ru_full",
+                                        chunk_size=codex_chunk_cues,
+                                    ),
+                                )
                             )
-                            if cue_tasks
-                            else {}
-                        )
 
                         from rtve_dl.subs.vtt import Cue
 
@@ -623,19 +681,29 @@ def download_selector(
                         debug(f"cache hit srt: {srt_ru}")
 
                     if not _is_nonempty_file(srt_bi):
-                        refs_base_path = paths.tmp / f"{base}.ru_ref"
-                        refs_map = (
-                            translate_es_to_ru_refs_with_codex(
-                                cues=cue_tasks,
-                                base_path=refs_base_path,
-                                chunk_size_cues=codex_chunk_cues,
-                                model=codex_model,
-                                resume=True,
-                                max_workers=jobs_codex_chunks,
+                        refs_cached, refs_missing = global_cache.split_for_track(cues=cue_tasks, track="ru_refs")
+                        refs_base_path = paths.layout.codex_base(base, "ru_ref")
+                        refs_map = dict(refs_cached)
+                        if refs_missing:
+                            refs_chunk_size = min(200, codex_chunk_cues)
+                            refs_map.update(
+                                translate_es_to_ru_refs_with_codex(
+                                    cues=refs_missing,
+                                    base_path=refs_base_path,
+                                    chunk_size_cues=refs_chunk_size,
+                                    model=codex_primary_model,
+                                    fallback_model=codex_fallback_model,
+                                    resume=True,
+                                    max_workers=jobs_codex_chunks,
+                                    context=CodexExecutionContext(
+                                        telemetry=telemetry,
+                                        run_id=run_id,
+                                        episode_id=a.asset_id,
+                                        track_type="ru_refs",
+                                        chunk_size=refs_chunk_size,
+                                    ),
+                                )
                             )
-                            if cue_tasks
-                            else {}
-                        )
 
                         from rtve_dl.subs.vtt import Cue
 
@@ -643,7 +711,7 @@ def download_selector(
                             Cue(
                                 start_ms=c.start_ms,
                                 end_ms=c.end_ms,
-                                text=refs_map.get(f"{i}", (c.text or "").strip()),
+                                text=_compose_ref_text((c.text or "").strip(), refs_map.get(f"{i}", "")),
                             )
                             for i, c in enumerate(es_cues)
                         ]
@@ -740,12 +808,14 @@ def download_selector(
                 )
                 tmp_out.replace(out_mkv)
             _ep_log(ep_tag, f"done ({time.time() - t0:.1f}s)")
+            telemetry.end_episode(run_id=run_id, episode_id=a.asset_id, status="ok")
             print(out_mkv)
             return None
         except Exception as e:
             msg = f"{a.asset_id}: {e}"
             _ep_log(ep_tag, f"fail ({time.time() - t0:.1f}s)")
             error(msg)
+            telemetry.end_episode(run_id=run_id, episode_id=a.asset_id, status="failed")
             if not is_season:
                 raise
             return msg
@@ -771,13 +841,15 @@ def download_selector(
         debug(f"index:start {paths.out}")
         index_path = build_slug_index(
             paths.out,
-            tmp_dir=paths.tmp,
-            codex_model=codex_model,
+            tmp_dir=paths.layout.meta,
+            codex_dir=paths.layout.codex_ru,
+            codex_model=codex_primary_model,
             codex_chunk_cues=codex_chunk_cues,
             jobs_codex_chunks=jobs_codex_chunks,
         )
         debug(f"index:done {index_path}")
     except Exception as e:
         error(f"index:fail {paths.out}: {e}")
-
+    status = "failed" if failures else "ok"
+    telemetry.end_run(run_id=run_id, status=status)
     return 1 if failures else 0

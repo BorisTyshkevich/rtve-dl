@@ -18,11 +18,14 @@ This document describes all cache layers used by `rtve_dl`, reset semantics, and
   - generated `.m3u` helper links (from HTML JS)
 - `tmp/<slug>/`
   - downloaded/transcoded sources (`.mp4`, `.vtt`, `.srt`)
-  - Codex chunk inputs/outputs/logs (`.jsonl`, `.log`)
+  - Codex chunk inputs/outputs/logs (`.jsonl`, `.tsv`, `.log`)
   - ASR artifacts/logs
   - catalog cache (`catalog_*.json`)
   - auto subtitle delay cache (`subtitle_delay.auto.json`)
   - index metadata translation cache (`index_meta_ru.json`)
+  - run telemetry DB (`telemetry.sqlite`)
+- `data/global_phrase_cache.json`
+  - optional static global cache for repeated ES phrases (`ru_full`, `ru_refs`, `en_mt`)
 
 ## Episode Cache Objects
 
@@ -45,17 +48,20 @@ For an episode base name `SxxExx_<title>` and `asset_id`:
 
 - Codex EN chunk cache (ES->EN fallback)
   - `tmp/<slug>/<base>.en*.jsonl`
+  - `tmp/<slug>/<base>.en*.tsv`
   - `tmp/<slug>/<base>.en*.out.*.jsonl`
   - `tmp/<slug>/<base>.en*.log`
 
 - Codex RU full chunk cache
   - `tmp/<slug>/<base>.ru*.jsonl`
+  - `tmp/<slug>/<base>.ru*.tsv`
   - `tmp/<slug>/<base>.ru*.out.*.jsonl`
   - `tmp/<slug>/<base>.ru*.log`
   - Excludes refs prefix in logic where needed.
 
 - Codex RU refs chunk cache
   - `tmp/<slug>/<base>.ru_ref*.jsonl`
+  - `tmp/<slug>/<base>.ru_ref*.tsv`
   - `tmp/<slug>/<base>.ru_ref*.out.*.jsonl`
   - `tmp/<slug>/<base>.ru_ref*.log`
 
@@ -71,6 +77,9 @@ For an episode base name `SxxExx_<title>` and `asset_id`:
 - `tmp/<slug>/catalog_<hash>.json`
 - `tmp/<slug>/subtitle_delay.auto.json`
 - `tmp/<slug>/index_meta_ru.json`
+- `tmp/<slug>/telemetry.sqlite`
+  - schema defined in `sql/schema.sql`
+  - aggregate queries in `sql/reports.sql`
 
 ## Cache Hit Policy
 
@@ -149,6 +158,9 @@ There are two distinct behaviors:
 - Existing chunk outputs are reused.
 - Only missing chunks are sent to `codex exec`.
 - This is the main resumability guarantee.
+- Codex I/O format:
+  - internal durable cache: JSONL
+  - LLM payload/response: TSV (smaller token footprint)
 
 2. Explicit subtitle reset (`subs-en`, `subs-ru`, `subs-refs`, or cascading from `subs-es`/`video`)
 - Matching SRT is deleted.
@@ -161,6 +173,7 @@ There are two distinct behaviors:
 - `T7S9` reset affects only S07E09 files.
 - `T7` reset affects only episodes selected in season 7.
 - `catalog` is slug-level and not episode-limited.
+- `data/global_phrase_cache.json` is not affected by reset layers.
 - Recommended restart flow after crash in season reset:
   - first run with `--reset-layer ...`
   - restart without `--reset-layer` to continue from cache

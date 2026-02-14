@@ -65,12 +65,16 @@ def main(argv: list[str] | None = None) -> int:
         action=argparse.BooleanOptionalAction,
         help="Fail an episode if Russian subtitles could not be generated. Default: enabled.",
     )
-    p.add_argument("--codex-model", default=None, help="Override Codex model for `codex exec` (optional)")
+    p.add_argument(
+        "--codex-model",
+        default="gpt-5.1-codex-mini",
+        help="Primary Codex model for batch translation (default: gpt-5.1-codex-mini)",
+    )
     p.add_argument(
         "--codex-chunk-cues",
         type=int,
-        default=400,
-        help="Chunk size in cues for batch translation (default: 400)",
+        default=500,
+        help="Chunk size in cues for batch translation (default: 500)",
     )
     p.add_argument(
         "--parallel",
