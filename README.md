@@ -185,12 +185,13 @@ rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \
 - Re-running `download` is safe and cache-based.
 - Global static phrase cache is loaded from `data/global_phrase_cache.json` (if present).
   Start from `global_phrase_cache.example.json`.
-- Codex chunk telemetry is written to `tmp/<slug>/telemetry.sqlite`.
+- Codex chunk telemetry is written to `tmp/<slug>/meta/telemetry.sqlite`.
 - SQL artifacts:
-  - schema bootstrap: `sql/schema.sql`
-  - analytics queries: `sql/reports.sql`
+  - schema bootstrap: `src/rtve_dl/sql/schema.sql`
+  - analytics queries: `src/rtve_dl/sql/reports.sql`
 - The tool does not bypass DRM.
 - Full cache internals and reset semantics are documented in `caches.md`.
+- Project structure map: `docs/architecture.md`.
 
 ## License
 

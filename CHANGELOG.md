@@ -13,7 +13,9 @@
   including legacy artifacts (`*.srt.log`, `*.srt.bak.*`, unknown leftovers).
 - Updated reset, catalog cache, subtitle delay cache, telemetry DB, and index metadata
   paths to use the new tmp layout.
-- Ensured repository tracks SQL assets under `sql/` for schema/report workflows.
+- Moved SQL assets into package resources under `src/rtve_dl/sql/`
+  (`schema.sql`, `reports.sql`).
+- Added repository structure map in `docs/architecture.md`.
 
 ## 0.2.2
 

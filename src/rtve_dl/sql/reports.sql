@@ -1,5 +1,5 @@
 -- Usage:
--- sqlite3 tmp/<slug>/telemetry.sqlite < sql/reports.sql
+-- sqlite3 tmp/<slug>/meta/telemetry.sqlite < src/rtve_dl/sql/reports.sql
 
 .mode column
 .headers on

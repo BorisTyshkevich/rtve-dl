@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.resources as resources
 import sqlite3
 import threading
 import uuid
@@ -21,8 +22,7 @@ class TelemetryDB:
         self._init_schema()
 
     def _init_schema(self) -> None:
-        schema_path = Path(__file__).resolve().parents[2] / "sql" / "schema.sql"
-        schema_sql = schema_path.read_text(encoding="utf-8")
+        schema_sql = resources.files("rtve_dl.sql").joinpath("schema.sql").read_text(encoding="utf-8")
         with self._lock:
             self._conn.executescript(schema_sql)
             self._conn.commit()
