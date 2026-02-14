@@ -1,45 +1,104 @@
 # Architecture
 
-## Repository Layout
+## Overview
+
+`rtve-dl` is a pipeline-oriented downloader for RTVE episodes with subtitle enrichment and MKV packaging.
+
+High-level flow:
 
 ```text
-.
-├── src/
-│   └── rtve_dl/
-│       ├── cli.py                  # CLI entrypoint
-│       ├── workflows/
-│       │   └── download.py         # Main orchestration pipeline
-│       ├── rtve/                   # RTVE catalog/resolve/download helpers
-│       ├── subs/                   # VTT/SRT parsing, rendering, delay estimation
-│       ├── codex_*.py              # Codex chunk translation pipelines
-│       ├── asr_*.py                # ASR backends
-│       ├── ffmpeg.py               # Download/mux helpers
-│       ├── telemetry.py            # SQLite telemetry writes
-│       ├── tmp_layout.py           # tmp/<slug>/... structure and migration
-│       ├── prompts/                # Prompt templates used by codex modules
-│       └── sql/                    # Packaged SQL resources (part of runtime)
-│           ├── schema.sql          # Telemetry DB schema bootstrap
-│           ├── reports.sql         # Report query pack
-│           └── migrations/         # Reserved for future SQL migrations
-├── tools/                          # Utility scripts for local ops/testing
-├── docs/                           # Project documentation
-├── README.md                       # User-facing usage guide
-├── caches.md                       # Cache internals and reset semantics
-├── data/                           # Runtime output (mkv, index.html)
-└── tmp/                            # Runtime cache/work artifacts
+CLI
+  -> Catalog (RTVE series listing, cached)
+  -> Episode selection (season or single episode)
+  -> Per-episode processing
+       -> Resolve episode metadata + direct media/subtitle URLs
+       -> Download/reuse MP4
+       -> Build ES subtitles (RTVE VTT or ASR fallback)
+       -> Optional ES cleanup (Codex, post-ASR by default)
+       -> Build EN subtitles (RTVE EN or ES->EN MT fallback)
+       -> Build RU subtitles (full RU + RU refs)
+       -> Build bilingual track (ES + full RU) from existing RU map
+       -> Mux MKV with subtitle delay applied at mux stage
+  -> Generate/update slug index.html
 ```
 
-## Why `src/rtve_dl`
+Execution is parallel at two levels:
+- episode-level workers (`--jobs-episodes`)
+- chunk-level Codex workers (`--jobs-codex-chunks`)
 
-The project uses Python `src` layout to keep import/runtime boundaries explicit and avoid accidental imports from repo root during local runs.
+## Module Map
 
-## Why `src/rtve_dl/sql`
+```text
+src/rtve_dl/
+├── cli.py                    # CLI entrypoint and argument mapping to workflow
+├── workflows/download.py     # Main orchestration pipeline
+├── rtve/                     # RTVE catalog/resolve/download URL logic
+├── subs/                     # VTT/SRT parse/render + subtitle timing helpers
+├── ffmpeg.py                 # MP4 download and MKV mux operations
+├── asr_mlx.py                # MLX Whisper backend (Apple Silicon friendly)
+├── asr_whisperx.py           # WhisperX backend
+├── codex_batch.py            # Shared Codex chunk engine (TSV payload + JSONL cache)
+├── codex_ru.py               # ES -> RU full translation
+├── codex_ru_refs.py          # ES -> RU gloss references (B2/C1/C2)
+├── codex_en.py               # ES -> EN fallback translation
+├── codex_es_clean.py         # Spanish subtitle cleanup pass
+├── global_phrase_cache.py    # Optional static phrase cache for Codex calls
+├── telemetry.py              # SQLite telemetry (runs/episodes/chunks)
+├── tmp_layout.py             # tmp layout, path helpers, legacy migration
+├── index_html.py             # Per-slug catalog/index generation
+├── prompts/                  # Prompt templates packaged with code
+│   ├── ru_full.md
+│   ├── ru_refs.md
+│   ├── en_mt.md
+│   └── es_clean.md
+└── sql/                      # Runtime SQL resources
+    ├── schema.sql
+    ├── reports.sql
+    └── migrations/           # Reserved for future schema upgrades
+```
 
-`schema.sql` and `reports.sql` are runtime assets, so they live inside the package and are loaded via `importlib.resources`. This keeps SQL and code versioned together and consistent for installed environments.
+## Cache and Data Boundaries
 
-## Runtime Storage (outside source tree)
+Runtime state lives outside source tree:
+- `tmp/<slug>/...` for cache/work artifacts
+- `data/<slug>/...` for final outputs (`*.mkv`, `index.html`, downloadable assets)
 
-- `tmp/<slug>/...` keeps transient and cache artifacts.
-- `data/<slug>/...` keeps final output files.
+Key tmp buckets:
+- `tmp/<slug>/mp4/` video cache
+- `tmp/<slug>/vtt/` raw subtitle downloads
+- `tmp/<slug>/srt/` built subtitle tracks
+- `tmp/<slug>/codex/{ru,ru_ref,en,es_clean}/` chunk input/output/log caches
+- `tmp/<slug>/meta/` catalog cache, delay cache, telemetry DB
 
-Source code never writes runtime state into `src/`.
+Layer reset is dependency-aware via `--reset-layer`/`--reset`.
+
+## Codex Processing Model
+
+Codex operations are chunked and resumable:
+- Input cues are split into deterministic chunks.
+- Per chunk, pipeline stores TSV/JSONL artifacts and logs in `tmp/<slug>/codex/...`.
+- Existing non-empty output chunks are reused (`resume=True`).
+- Missing/failed chunks are retried with smaller chunk sizes.
+
+Current prompt modes:
+- `translate_ru` -> full Russian subtitle track
+- `ru_refs_b2plus` -> Russian glossary references for difficult ES terms
+- `translate_en` -> fallback English track
+- `es_clean_light` -> light editorial cleanup for Spanish subtitles
+
+## Subtitle Tracks in Output MKV
+
+Typical muxed tracks:
+- `Spanish`
+- `English` or `English (MT)`
+- `Russian`
+- `Spanish|RU refs` (learning-focused references)
+- `Spanish|Russian (Full)` (full bilingual line pair)
+
+Default subtitle track is set to `Spanish|RU refs`.
+
+## Why `src/rtve_dl` and Packaged SQL
+
+The project uses Python `src` layout to prevent accidental repo-root imports and keep install/runtime behavior predictable.
+
+`schema.sql` and `reports.sql` are packaged in `src/rtve_dl/sql` and loaded via `importlib.resources`, so DB schema/report logic stays version-aligned with code.
