@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.3
+
+- Refactored tmp storage into structured subdirectories per slug:
+  - `tmp/<slug>/mp4`
+  - `tmp/<slug>/vtt`
+  - `tmp/<slug>/srt`
+  - `tmp/<slug>/codex/{en,ru,ru_ref}`
+  - `tmp/<slug>/meta` and `tmp/<slug>/meta/legacy`
+- Added `TmpLayout` and centralized cache path helpers used by downloader stages.
+- Added/extended automatic tmp migration from old flat layout to new structure,
+  including legacy artifacts (`*.srt.log`, `*.srt.bak.*`, unknown leftovers).
+- Updated reset, catalog cache, subtitle delay cache, telemetry DB, and index metadata
+  paths to use the new tmp layout.
+- Ensured repository tracks SQL assets under `sql/` for schema/report workflows.
+
 ## 0.2.2
 
 - Codex prompt templates moved to package files:
