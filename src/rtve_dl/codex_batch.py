@@ -39,6 +39,7 @@ _PROMPT_FILES = {
     "translate_ru": "ru_full.md",
     "translate_en": "en_mt.md",
     "ru_refs_b2plus": "ru_refs.md",
+    "es_clean_light": "es_clean.md",
 }
 _TOKENS_USED_RE = re.compile(r"tokens used\s*\n\s*([0-9][0-9,]*)", re.IGNORECASE | re.MULTILINE)
 

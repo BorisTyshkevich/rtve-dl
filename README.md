@@ -166,6 +166,25 @@ If a season run with reset crashes, restart without `--reset-layer` to continue 
 
 If RTVE has no ES subtitles and `--asr-if-missing` is enabled (default), ASR generates `*.spa.srt`.
 
+After ASR, Spanish subtitles are post-processed by Codex (light normalization) by default:
+- fixes obvious ASR mistakes
+- normalizes punctuation/capitalization/accents
+- preserves meaning (no heavy rewrites)
+
+Controls:
+- `--no-es-postprocess` to disable
+- `--es-postprocess-force` to run cleanup even for RTVE-provided ES subtitles
+- `--es-postprocess-model <model>` to override model only for ES cleanup
+  (default cleanup model: `gpt-5.1-codex-mini`)
+- `--es-postprocess-chunk-cues <N>` to override chunk size only for ES cleanup
+  (default is 100 cues per cleanup chunk)
+
+If ES cleanup fails, pipeline falls back to raw ES subtitles and continues.
+
+`--reset-layer subs-es` removes cleaned ES (`*.spa.srt`) and cleanup caches, but keeps raw ASR cache
+(`*.spa.asr_raw.srt`) so ES can be rebuilt without re-running ASR.
+If you need a full re-ASR, delete `tmp/<slug>/srt/<base>.spa.asr_raw.srt` manually before rerun.
+
 Use MLX backend explicitly:
 
 ```bash
@@ -186,6 +205,7 @@ rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \
 - Global static phrase cache is loaded from `data/global_phrase_cache.json` (if present).
   Start from `global_phrase_cache.example.json`.
 - Codex chunk telemetry is written to `tmp/<slug>/meta/telemetry.sqlite`.
+- For ASR episodes, raw ES subtitles are kept as `tmp/<slug>/srt/<base>.spa.asr_raw.srt`.
 - SQL artifacts:
   - schema bootstrap: `src/rtve_dl/sql/schema.sql`
   - analytics queries: `src/rtve_dl/sql/reports.sql`

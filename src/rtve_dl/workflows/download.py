@@ -19,6 +19,7 @@ from rtve_dl.log import debug, error, stage
 from rtve_dl.codex_ru import translate_es_to_ru_with_codex
 from rtve_dl.codex_ru_refs import translate_es_to_ru_refs_with_codex
 from rtve_dl.codex_en import translate_es_to_en_with_codex
+from rtve_dl.codex_es_clean import clean_es_with_codex
 from rtve_dl.codex_batch import CodexExecutionContext
 from rtve_dl.asr_whisperx import transcribe_es_to_srt_with_whisperx
 from rtve_dl.asr_mlx import transcribe_es_to_srt_with_mlx_whisper
@@ -207,6 +208,7 @@ def _reset_selector_layers(*, paths: SeriesPaths, assets: list[SeriesAsset], lay
         if "subs-es" in layers:
             _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa.srt", reason="subs-es")
             _safe_unlink(paths.layout.vtt_es_file(asset_id), reason="subs-es")
+            _safe_unlink_glob(paths.layout.codex_es_clean, f"{prefix}*.es_clean*", reason="subs-es")
             _safe_unlink_glob(paths.layout.codex_en, f"{prefix}*.en*", reason="subs-es")
             _safe_unlink_glob(paths.layout.codex_ru_ref, f"{prefix}*.ru_ref*", reason="subs-es")
             _safe_unlink_glob(paths.layout.codex_ru, f"{prefix}*.ru*", reason="subs-es")
@@ -310,6 +312,10 @@ def download_selector(
     require_ru: bool,
     translate_en_if_missing: bool,
     asr_if_missing: bool,
+    es_postprocess: bool,
+    es_postprocess_force: bool,
+    es_postprocess_model: str | None,
+    es_postprocess_chunk_cues: int | None,
     asr_model: str,
     asr_device: str,
     asr_compute_type: str,
@@ -335,6 +341,7 @@ def download_selector(
     _ensure_dirs(paths)
     codex_primary_model = codex_model or "gpt-5.1-codex-mini"
     codex_fallback_model = "gpt-5.3-codex" if codex_primary_model == "gpt-5.1-codex-mini" else None
+    es_clean_default_model = "gpt-5.1-codex-mini"
     global_cache: GlobalPhraseCache = load_global_phrase_cache(Path("data") / "global_phrase_cache.json")
     telemetry = TelemetryDB(paths.layout.telemetry_db())
     run_id = telemetry.start_run(
@@ -411,6 +418,7 @@ def download_selector(
             out_mkv = paths.out / f"{base}.mkv"
             mp4_path = paths.layout.mp4_file(base)
             srt_es = paths.layout.srt_es_file(base)
+            srt_es_raw = paths.layout.srt / f"{base}.spa.asr_raw.srt"
             _remove_if_empty(out_mkv, kind="mkv")
             if out_mkv.exists():
                 debug(f"skip mkv exists (pre-resolve): {out_mkv}")
@@ -489,7 +497,51 @@ def download_selector(
                 if not is_valid_mp4(mp4_path):
                     raise RuntimeError(f"downloaded mp4 is invalid: {mp4_path}")
 
-            def _task_es() -> list:
+            def _run_es_postprocess(*, es_cues_local: list, source: str) -> list:
+                should_run = es_postprocess and (source == "asr" or es_postprocess_force)
+                if not should_run:
+                    return es_cues_local
+                with stage(f"build:srt:es_clean:{a.asset_id}"):
+                    _remove_if_empty(srt_es, kind="srt")
+                    if _is_nonempty_file(srt_es) and source != "asr":
+                        # In force mode with RTVE source we still rebuild from cues.
+                        pass
+                    cue_tasks = [(f"{i}", (c.text or "").strip()) for i, c in enumerate(es_cues_local) if (c.text or "").strip()]
+                    if not cue_tasks:
+                        return es_cues_local
+                    es_clean_chunk_size = max(1, es_postprocess_chunk_cues)
+                    clean_map: dict[str, str] = {}
+                    try:
+                        clean_map = clean_es_with_codex(
+                            cues=cue_tasks,
+                            base_path=paths.layout.codex_base(base, "es_clean"),
+                            chunk_size_cues=es_clean_chunk_size,
+                            model=es_postprocess_model or es_clean_default_model,
+                            fallback_model=None,
+                            resume=True,
+                            max_workers=jobs_codex_chunks,
+                            context=CodexExecutionContext(
+                                telemetry=telemetry,
+                                run_id=run_id,
+                                episode_id=a.asset_id,
+                                track_type="es_clean",
+                                chunk_size=es_clean_chunk_size,
+                            ),
+                        )
+                    except Exception as e:
+                        error(f"{a.asset_id}: ES cleanup failed, fallback to raw ES subtitles: {e}")
+                        return es_cues_local
+
+                    from rtve_dl.subs.vtt import Cue
+
+                    clean_cues = [
+                        Cue(start_ms=c.start_ms, end_ms=c.end_ms, text=clean_map.get(f"{i}", (c.text or "").strip()))
+                        for i, c in enumerate(es_cues_local)
+                    ]
+                    srt_es.write_text(cues_to_srt(clean_cues), encoding="utf-8")
+                    return clean_cues
+
+            def _task_es() -> tuple[list, str]:
                 if resolved.subtitles_es_vtt:
                     with stage(f"download:subs:es:{a.asset_id}"):
                         es_vtt = paths.layout.vtt_es_file(a.asset_id)
@@ -501,26 +553,33 @@ def download_selector(
                             srt_es.write_text(cues_to_srt(es_cues_local), encoding="utf-8")
                         else:
                             debug(f"cache hit srt: {srt_es}")
-                    return es_cues_local
+                    es_cues_local = _run_es_postprocess(es_cues_local=es_cues_local, source="rtve")
+                    return es_cues_local, "rtve"
 
                 if not asr_if_missing:
                     raise RuntimeError(
                         f"missing Spanish subtitles for asset {a.asset_id}; enable fallback with --asr-if-missing"
                     )
                 with stage(f"build:srt:es_asr:{a.asset_id}"):
+                    _remove_if_empty(srt_es_raw, kind="srt")
                     _remove_if_empty(srt_es, kind="srt")
                     if not _is_nonempty_file(srt_es):
+                        def _write_canonical_from_raw() -> None:
+                            if not _is_nonempty_file(srt_es_raw):
+                                raise RuntimeError(f"missing raw ASR srt: {srt_es_raw}")
+                            srt_es.write_text(srt_es_raw.read_text(encoding="utf-8"), encoding="utf-8")
+
                         def _run_asr() -> None:
                             if asr_backend == "mlx":
                                 transcribe_es_to_srt_with_mlx_whisper(
                                     media_path=mp4_path,
-                                    out_srt=srt_es,
+                                    out_srt=srt_es_raw,
                                     model_repo=asr_mlx_model,
                                 )
                             elif asr_backend == "whisperx":
                                 transcribe_es_to_srt_with_whisperx(
                                     media_path=mp4_path,
-                                    out_srt=srt_es,
+                                    out_srt=srt_es_raw,
                                     model=asr_model,
                                     device=asr_device,
                                     compute_type=asr_compute_type,
@@ -530,23 +589,34 @@ def download_selector(
                             else:
                                 raise RuntimeError(f"unsupported ASR backend: {asr_backend}")
 
-                        try:
-                            _run_asr()
-                        except Exception as e:
-                            msg = str(e).lower()
-                            recoverable = (
-                                "failed to load audio" in msg
-                                or "invalid data found when processing input" in msg
-                                or "no such file or directory" in msg
-                            )
-                            if not recoverable:
-                                raise
-                            error(f"{a.asset_id}: ASR failed, retrying after forced mp4 re-download")
-                            _task_video(force_redownload=True)
-                            _run_asr()
+                        if _is_nonempty_file(srt_es_raw):
+                            debug(f"{a.asset_id}: reusing cached raw ASR subtitles: {srt_es_raw}")
+                        else:
+                            try:
+                                _run_asr()
+                            except Exception as e:
+                                msg = str(e).lower()
+                                recoverable = (
+                                    "failed to load audio" in msg
+                                    or "invalid data found when processing input" in msg
+                                    or "no such file or directory" in msg
+                                )
+                                if not recoverable:
+                                    raise
+                                error(f"{a.asset_id}: ASR failed, retrying after forced mp4 re-download")
+                                _task_video(force_redownload=True)
+                                _run_asr()
+                        _write_canonical_from_raw()
                     else:
                         debug(f"cache hit srt: {srt_es}")
-                    return parse_srt(srt_es.read_text(encoding="utf-8"))
+                        if not _is_nonempty_file(srt_es_raw):
+                            try:
+                                srt_es_raw.write_text(srt_es.read_text(encoding="utf-8"), encoding="utf-8")
+                            except OSError:
+                                pass
+                    es_cues_local = parse_srt(srt_es.read_text(encoding="utf-8"))
+                    es_cues_local = _run_es_postprocess(es_cues_local=es_cues_local, source="asr")
+                    return es_cues_local, "asr"
 
             def _ensure_mp4_consistent_with_es() -> None:
                 if not _is_nonempty_file(srt_es):
@@ -751,7 +821,7 @@ def download_selector(
                 if resolved.subtitles_es_vtt:
                     with ThreadPoolExecutor(max_workers=1) as video_pool:
                         video_future = video_pool.submit(_task_video)
-                        es_cues = _task_es()
+                        es_cues, _es_source = _task_es()
                         video_future.result()
                         _ensure_mp4_consistent_with_es()
                         _ep_log(ep_tag, "translations")
@@ -769,7 +839,7 @@ def download_selector(
                             subs.extend(ru_tracks)
                 else:
                     _task_video()
-                    es_cues = _task_es()
+                    es_cues, _es_source = _task_es()
                     _ensure_mp4_consistent_with_es()
                     _ep_log(ep_tag, "translations")
                     with ThreadPoolExecutor(max_workers=2) as tr_pool:
@@ -785,7 +855,7 @@ def download_selector(
                         subs.extend(ru_tracks)
             else:
                 _task_video()
-                es_cues = _task_es()
+                es_cues, _es_source = _task_es()
                 _ensure_mp4_consistent_with_es()
                 _ep_log(ep_tag, "translations")
                 try:

@@ -39,11 +39,18 @@ For an episode base name `SxxExx_<title>` and `asset_id`:
   - `tmp/<slug>/vtt/<asset_id>.en.vtt`
 
 - Built subtitles
+  - `tmp/<slug>/srt/<base>.spa.asr_raw.srt` (raw ASR output, when ASR fallback used)
   - `tmp/<slug>/srt/<base>.spa.srt`
   - `tmp/<slug>/srt/<base>.eng.srt`
   - `tmp/<slug>/srt/<base>.rus.srt`
   - `tmp/<slug>/srt/<base>.spa_rus.srt`
   - `tmp/<slug>/srt/<base>.spa_rus_full.srt`
+
+- Codex ES cleanup chunk cache (ASR post-process)
+  - `tmp/<slug>/codex/es_clean/<base>.es_clean*.jsonl`
+  - `tmp/<slug>/codex/es_clean/<base>.es_clean*.tsv`
+  - `tmp/<slug>/codex/es_clean/<base>.es_clean*.out.*.jsonl`
+  - `tmp/<slug>/codex/es_clean/<base>.es_clean*.log`
 
 - Codex EN chunk cache (ES->EN fallback)
   - `tmp/<slug>/codex/en/<base>.en*.jsonl`
@@ -128,7 +135,9 @@ Episode layers:
 - `subs-es`
   - `tmp/<slug>/srt/SxxExx_*.spa.srt` for selected episodes
   - `tmp/<slug>/vtt/<asset_id>.es.vtt`
+  - ES cleanup Codex chunk caches (`SxxExx_*.es_clean*`)
   - EN/RU/refs Codex chunk caches (`SxxExx_*.en*`, `SxxExx_*.ru*`, `SxxExx_*.ru_ref*`)
+  - Raw ASR cache `*.spa.asr_raw.srt` is preserved to allow ES rebuild without re-running ASR.
 
 - `subs-en`
   - `tmp/<slug>/srt/SxxExx_*.eng.srt` for selected episodes

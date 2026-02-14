@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.4
+
+- Added Spanish subtitle post-processing stage (`es_clean`) via Codex prompt templates:
+  - new module `src/rtve_dl/codex_es_clean.py`
+  - new prompt `src/rtve_dl/prompts/es_clean.md`
+- Added dedicated ES cleanup cache directory in tmp layout:
+  - `tmp/<slug>/codex/es_clean/`
+  - tmp migration now routes `*.es_clean.*` artifacts into that directory.
+- Added ES cleanup CLI controls:
+  - `--es-postprocess` / `--no-es-postprocess`
+  - `--es-postprocess-force`
+  - `--es-postprocess-model`
+  - `--es-postprocess-chunk-cues` (default: `100`)
+- Updated ES cleanup runtime defaults:
+  - default cleanup model is `gpt-5.1-codex-mini`
+  - ES cleanup does not use model fallback; on failure pipeline keeps raw ES subtitles.
+- Improved ASR subtitle cache behavior:
+  - raw ASR output is persisted as `tmp/<slug>/srt/<base>.spa.asr_raw.srt`
+  - canonical `*.spa.srt` can be rebuilt from raw cache without re-running ASR
+  - `--reset-layer subs-es` clears ES/cleanup artifacts but preserves raw ASR cache.
+- Documentation updates:
+  - README expanded for ES post-processing controls and ASR raw cache behavior
+  - `caches.md` updated with ES cleanup cache and reset semantics.
+
 ## 0.2.3
 
 - Refactored tmp storage into structured subdirectories per slug:
@@ -16,6 +40,11 @@
 - Moved SQL assets into package resources under `src/rtve_dl/sql/`
   (`schema.sql`, `reports.sql`).
 - Added repository structure map in `docs/architecture.md`.
+- Added Spanish post-ASR cleanup stage via Codex (`es_clean_light`) with fallback
+  to raw ASR subtitles on cleanup failure.
+- Added CLI controls for ES cleanup:
+  `--es-postprocess`, `--es-postprocess-force`, `--es-postprocess-model`,
+  `--es-postprocess-chunk-cues`.
 
 ## 0.2.2
 

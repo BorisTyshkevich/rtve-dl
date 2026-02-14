@@ -13,6 +13,7 @@ class TmpLayout:
     vtt: Path
     srt: Path
     codex_en: Path
+    codex_es_clean: Path
     codex_ru: Path
     codex_ru_ref: Path
     meta: Path
@@ -26,6 +27,7 @@ class TmpLayout:
             vtt=root / "vtt",
             srt=root / "srt",
             codex_en=root / "codex" / "en",
+            codex_es_clean=root / "codex" / "es_clean",
             codex_ru=root / "codex" / "ru",
             codex_ru_ref=root / "codex" / "ru_ref",
             meta=root / "meta",
@@ -38,6 +40,7 @@ class TmpLayout:
         self.vtt.mkdir(parents=True, exist_ok=True)
         self.srt.mkdir(parents=True, exist_ok=True)
         self.codex_en.mkdir(parents=True, exist_ok=True)
+        self.codex_es_clean.mkdir(parents=True, exist_ok=True)
         self.codex_ru.mkdir(parents=True, exist_ok=True)
         self.codex_ru_ref.mkdir(parents=True, exist_ok=True)
         self.meta.mkdir(parents=True, exist_ok=True)
@@ -70,6 +73,8 @@ class TmpLayout:
     def codex_base(self, base: str, track: str) -> Path:
         if track == "en":
             return self.codex_en / f"{base}.en"
+        if track == "es_clean":
+            return self.codex_es_clean / f"{base}.es_clean"
         if track == "ru":
             return self.codex_ru / f"{base}.ru"
         if track == "ru_ref":
@@ -87,6 +92,8 @@ class TmpLayout:
 
 
 def _codex_track_for_name(name: str) -> str | None:
+    if ".es_clean." in name:
+        return "es_clean"
     if ".ru_ref." in name:
         return "ru_ref"
     if ".en." in name:
@@ -136,6 +143,8 @@ def migrate_tmp_slug_layout(layout: TmpLayout) -> None:
             track = _codex_track_for_name(n)
             if track == "en":
                 dst = layout.codex_en / n
+            elif track == "es_clean":
+                dst = layout.codex_es_clean / n
             elif track == "ru":
                 dst = layout.codex_ru / n
             elif track == "ru_ref":
