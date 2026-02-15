@@ -192,6 +192,33 @@ def _text_hash(s: str) -> str:
     return sha1(s.encode("utf-8")).hexdigest()
 
 
+def _sanitize_ru_title(title_ru: str, description_ru: str) -> str:
+    t = _clean_text(title_ru)
+    if not t:
+        return ""
+    desc = _clean_text(description_ru)
+
+    # If title accidentally contains copied description text, keep only short head.
+    if desc:
+        t_norm = _WS_RE.sub(" ", t).strip().lower()
+        d_norm = _WS_RE.sub(" ", desc).strip().lower()
+        if t_norm == d_norm or (len(t) > 80 and d_norm and d_norm in t_norm):
+            t = t.split(".", 1)[0].strip()
+
+    # RU episode titles should be short. Oversized values are usually
+    # accidental copies of description text from translation output/cache.
+    if len(t) <= 100:
+        return t
+
+    # Prefer first sentence for oversized title text.
+    first = re.split(r"(?<=[.!?])\s+", t, maxsplit=1)[0].strip()
+    if first and len(first) <= 120:
+        return first
+
+    clipped = t[:120].rsplit(" ", 1)[0].strip()
+    return clipped.rstrip(" ,;:-")
+
+
 def _translate_ru_for_cards(
     cards: list[_CardMeta],
     *,
@@ -200,6 +227,7 @@ def _translate_ru_for_cards(
     codex_model: str | None,
     codex_chunk_cues: int,
     jobs_codex_chunks: int,
+    translation_backend: str = "claude",
 ) -> dict[str, tuple[str, str]]:
     path = _cache_file(meta_dir)
     cache = _load_ru_cache(path)
@@ -212,8 +240,8 @@ def _translate_ru_for_cards(
         title_h = _text_hash(c.title_es)
         desc_h = _text_hash(c.description_es)
         prev = cache_items.get(c.key) if isinstance(cache_items.get(c.key), dict) else {}
-        title_ru = str(prev.get("title_ru") or "")
         desc_ru = str(prev.get("description_ru") or "")
+        title_ru = _sanitize_ru_title(str(prev.get("title_ru") or ""), desc_ru)
 
         if c.title_es and (prev.get("title_es_hash") != title_h or not title_ru):
             cues.append((f"{c.key}|title", c.title_es))
@@ -225,30 +253,38 @@ def _translate_ru_for_cards(
     if cues:
         try:
             base_path = (codex_dir or Path("tmp")) / "index_meta_ru"
+            # Determine fallback model based on backend
+            if translation_backend == "claude":
+                fallback = "opus" if codex_model in ("sonnet", "claude-sonnet-4-20250514", None) else None
+            else:
+                fallback = "gpt-5.3-codex" if codex_model == "gpt-5.1-codex-mini" else None
             ru_map = translate_es_to_ru_with_codex(
                 cues=cues,
                 base_path=base_path,
                 chunk_size_cues=max(1, min(codex_chunk_cues, 50)),
                 model=codex_model,
-                fallback_model="gpt-5.3-codex" if codex_model == "gpt-5.1-codex-mini" else None,
+                fallback_model=fallback,
                 resume=True,
                 max_workers=max(1, jobs_codex_chunks),
+                use_context=False,  # index items are independent episodes, no context needed
+                backend=translation_backend,
             )
             for cue_id, tr in ru_map.items():
                 if "|title" in cue_id:
                     key = cue_id.rsplit("|title", 1)[0]
                     t, d = out.get(key, ("", ""))
-                    out[key] = (tr, d)
+                    out[key] = (_sanitize_ru_title(tr, d), d)
                 elif "|desc" in cue_id:
                     key = cue_id.rsplit("|desc", 1)[0]
                     t, d = out.get(key, ("", ""))
-                    out[key] = (t, tr)
+                    out[key] = (_sanitize_ru_title(t, tr), tr)
         except Exception as e:
             error(f"index ru translation failed, continuing with ES only: {e}")
 
     # Persist cache with latest hashes and available translations.
     for c in cards:
         title_ru, desc_ru = out.get(c.key, ("", ""))
+        title_ru = _sanitize_ru_title(title_ru, desc_ru)
         cache_items[c.key] = {
             "title_es_hash": _text_hash(c.title_es),
             "description_es_hash": _text_hash(c.description_es),
@@ -267,6 +303,7 @@ def build_slug_index(
     codex_model: str | None = None,
     codex_chunk_cues: int = 400,
     jobs_codex_chunks: int = 4,
+    translation_backend: str = "claude",
 ) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     rows = _mkv_rows(out_dir)
@@ -311,6 +348,7 @@ def build_slug_index(
         codex_model=codex_model,
         codex_chunk_cues=codex_chunk_cues,
         jobs_codex_chunks=jobs_codex_chunks,
+        translation_backend=translation_backend,
     )
 
     body_rows: list[str] = []

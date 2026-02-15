@@ -15,9 +15,10 @@ def clean_es_with_codex(
     resume: bool,
     max_workers: int,
     context: CodexExecutionContext | None = None,
+    backend: str = "claude",
 ) -> dict[str, str]:
     """
-    Spanish -> Spanish light editorial cleanup via `codex exec` chunk pipeline.
+    Spanish -> Spanish light editorial cleanup via translation backend chunk pipeline.
     Returns id->cleaned_es_text for all cues provided.
     """
     return translate_es_with_codex(
@@ -32,4 +33,5 @@ def clean_es_with_codex(
         max_workers=max_workers,
         prompt_mode="es_clean_light",
         context=context,
+        backend=backend,
     )

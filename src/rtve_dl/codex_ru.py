@@ -15,9 +15,11 @@ def translate_es_to_ru_with_codex(
     resume: bool,
     max_workers: int,
     context: CodexExecutionContext | None = None,
+    use_context: bool = True,
+    backend: str = "claude",
 ) -> dict[str, str]:
     """
-    Spanish -> Russian batch translation via `codex exec` JSONL chunks.
+    Spanish -> Russian batch translation via translation backend JSONL chunks.
     Returns id->ru_text for all cues provided.
     """
     return translate_es_with_codex(
@@ -32,4 +34,6 @@ def translate_es_to_ru_with_codex(
         max_workers=max_workers,
         prompt_mode="translate_ru",
         context=context,
+        use_context=use_context,
+        backend=backend,
     )

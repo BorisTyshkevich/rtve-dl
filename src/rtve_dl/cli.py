@@ -88,9 +88,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Fail an episode if Russian subtitles could not be generated. Default: enabled.",
     )
     p.add_argument(
+        "--translation-backend",
+        default="claude",
+        choices=["claude", "codex"],
+        help="Translation backend: claude (default) or codex",
+    )
+    p.add_argument(
+        "--claude-model",
+        default="sonnet",
+        help="Claude model alias or full name (default: sonnet). Aliases: sonnet, opus",
+    )
+    p.add_argument(
         "--codex-model",
         default="gpt-5.1-codex-mini",
-        help="Primary Codex model for batch translation (default: gpt-5.1-codex-mini)",
+        help="Codex model for batch translation when using codex backend (default: gpt-5.1-codex-mini)",
     )
     p.add_argument(
         "--codex-chunk-cues",
@@ -190,6 +201,8 @@ def main(argv: list[str] | None = None) -> int:
             asr_vad_method=a.asr_vad_method,
             asr_backend=a.asr_backend,
             asr_mlx_model=a.asr_mlx_model,
+            translation_backend=a.translation_backend,
+            claude_model=a.claude_model,
             codex_model=a.codex_model,
             codex_chunk_cues=a.codex_chunk_cues,
             subtitle_delay_ms=a.subtitle_delay_ms,

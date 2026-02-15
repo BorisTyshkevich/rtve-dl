@@ -15,9 +15,10 @@ def translate_es_to_en_with_codex(
     resume: bool,
     max_workers: int,
     context: CodexExecutionContext | None = None,
+    backend: str = "claude",
 ) -> dict[str, str]:
     """
-    Spanish -> English batch translation via `codex exec` JSONL chunks.
+    Spanish -> English batch translation via translation backend JSONL chunks.
     Returns id->en_text for all cues provided.
     """
     return translate_es_with_codex(
@@ -32,4 +33,5 @@ def translate_es_to_en_with_codex(
         max_workers=max_workers,
         prompt_mode="translate_en",
         context=context,
+        backend=backend,
     )

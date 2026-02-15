@@ -323,25 +323,35 @@ def download_selector(
     asr_vad_method: str,
     asr_backend: str,
     asr_mlx_model: str,
-    codex_model: str | None,
-    codex_chunk_cues: int,
-    subtitle_delay_ms: int,
-    subtitle_delay_mode: str,
-    subtitle_delay_auto_scope: str,
-    subtitle_delay_auto_samples: int,
-    subtitle_delay_auto_max_ms: int,
-    subtitle_delay_auto_refresh: bool,
-    parallel: bool,
-    jobs_episodes: int,
-    jobs_codex_chunks: int,
+    translation_backend: str = "claude",
+    claude_model: str | None = None,
+    codex_model: str | None = None,
+    codex_chunk_cues: int = 500,
+    subtitle_delay_ms: int = 800,
+    subtitle_delay_mode: str = "manual",
+    subtitle_delay_auto_scope: str = "series",
+    subtitle_delay_auto_samples: int = 3,
+    subtitle_delay_auto_max_ms: int = 15000,
+    subtitle_delay_auto_refresh: bool = False,
+    parallel: bool = True,
+    jobs_episodes: int = 2,
+    jobs_codex_chunks: int = 4,
     reset_layers: list[str] | None = None,
 ) -> int:
     http = HttpClient()
     paths = _paths_for(series_url, series_slug)
     _ensure_dirs(paths)
-    codex_primary_model = codex_model or "gpt-5.1-codex-mini"
-    codex_fallback_model = "gpt-5.3-codex" if codex_primary_model == "gpt-5.1-codex-mini" else None
-    es_clean_default_model = "gpt-5.1-codex-mini"
+
+    # Model resolution based on backend
+    if translation_backend == "claude":
+        primary_model = claude_model or "sonnet"
+        fallback_model = "opus" if primary_model in ("sonnet", "claude-sonnet-4-20250514") else None
+    else:
+        primary_model = codex_model or "gpt-5.1-codex-mini"
+        fallback_model = "gpt-5.3-codex" if primary_model == "gpt-5.1-codex-mini" else None
+
+    # For ES cleanup, use same backend but potentially different model
+    es_clean_default_model = "sonnet" if translation_backend == "claude" else "gpt-5.1-codex-mini"
     global_cache: GlobalPhraseCache = load_global_phrase_cache(Path("data") / "global_phrase_cache.json")
     telemetry = TelemetryDB(paths.layout.telemetry_db())
     run_id = telemetry.start_run(
@@ -352,7 +362,8 @@ def download_selector(
             "selector": selector,
             "series_slug": series_slug,
             "parallel": parallel,
-            "codex_model": codex_primary_model,
+            "translation_backend": translation_backend,
+            "primary_model": primary_model,
             "codex_chunk_cues": codex_chunk_cues,
             "jobs_codex_chunks": jobs_codex_chunks,
         },
@@ -527,6 +538,7 @@ def download_selector(
                                 track_type="es_clean",
                                 chunk_size=es_clean_chunk_size,
                             ),
+                            backend=translation_backend,
                         )
                     except Exception as e:
                         error(f"{a.asset_id}: ES cleanup failed, fallback to raw ES subtitles: {e}")
@@ -657,7 +669,7 @@ def download_selector(
                 if not translate_en_if_missing:
                     return None
 
-                # Fallback: machine-translate ES -> EN using Codex chunks.
+                # Fallback: machine-translate ES -> EN using translation backend chunks.
                 with stage(f"build:srt:en_mt:{a.asset_id}"):
                     srt_en = paths.layout.srt_en_file(base)
                     _remove_if_empty(srt_en, kind="srt")
@@ -672,8 +684,8 @@ def download_selector(
                                     cues=en_missing,
                                     base_path=base_path,
                                     chunk_size_cues=codex_chunk_cues,
-                                    model=codex_primary_model,
-                                    fallback_model=codex_fallback_model,
+                                    model=primary_model,
+                                    fallback_model=fallback_model,
                                     resume=True,
                                     max_workers=jobs_codex_chunks,
                                     context=CodexExecutionContext(
@@ -683,6 +695,7 @@ def download_selector(
                                         track_type="en_mt",
                                         chunk_size=codex_chunk_cues,
                                     ),
+                                    backend=translation_backend,
                                 )
                             )
 
@@ -726,8 +739,8 @@ def download_selector(
                                     cues=ru_missing,
                                     base_path=base_path,
                                     chunk_size_cues=codex_chunk_cues,
-                                    model=codex_primary_model,
-                                    fallback_model=codex_fallback_model,
+                                    model=primary_model,
+                                    fallback_model=fallback_model,
                                     resume=True,
                                     max_workers=jobs_codex_chunks,
                                     context=CodexExecutionContext(
@@ -737,6 +750,7 @@ def download_selector(
                                         track_type="ru_full",
                                         chunk_size=codex_chunk_cues,
                                     ),
+                                    backend=translation_backend,
                                 )
                             )
 
@@ -755,16 +769,17 @@ def download_selector(
                         refs_base_path = paths.layout.codex_base(base, "ru_ref")
                         refs_map = dict(refs_cached)
                         if refs_missing:
-                            refs_chunk_size = min(200, codex_chunk_cues)
+                            refs_chunk_size = min(400, codex_chunk_cues)
+                            refs_workers = max(1, min(2, jobs_codex_chunks))
                             refs_map.update(
                                 translate_es_to_ru_refs_with_codex(
                                     cues=refs_missing,
                                     base_path=refs_base_path,
                                     chunk_size_cues=refs_chunk_size,
-                                    model=codex_primary_model,
-                                    fallback_model=codex_fallback_model,
+                                    model=primary_model,
+                                    fallback_model=fallback_model,
                                     resume=True,
-                                    max_workers=jobs_codex_chunks,
+                                    max_workers=refs_workers,
                                     context=CodexExecutionContext(
                                         telemetry=telemetry,
                                         run_id=run_id,
@@ -772,6 +787,7 @@ def download_selector(
                                         track_type="ru_refs",
                                         chunk_size=refs_chunk_size,
                                     ),
+                                    backend=translation_backend,
                                 )
                             )
 
@@ -913,9 +929,10 @@ def download_selector(
             paths.out,
             tmp_dir=paths.layout.meta,
             codex_dir=paths.layout.codex_ru,
-            codex_model=codex_primary_model,
+            codex_model=primary_model,
             codex_chunk_cues=codex_chunk_cues,
             jobs_codex_chunks=jobs_codex_chunks,
+            translation_backend=translation_backend,
         )
         debug(f"index:done {index_path}")
     except Exception as e:

@@ -15,9 +15,10 @@ def translate_es_to_ru_refs_with_codex(
     resume: bool,
     max_workers: int,
     context: CodexExecutionContext | None = None,
+    backend: str = "claude",
 ) -> dict[str, str]:
     """
-    Spanish -> Spanish-with-inline-Russian-glosses (B2/C1/C2 only) via `codex exec` JSONL chunks.
+    Spanish -> Spanish-with-inline-Russian-glosses (B2/C1/C2 only) via translation backend JSONL chunks.
     Returns id->annotated_text for all cues provided.
     """
     return translate_es_with_codex(
@@ -32,4 +33,5 @@ def translate_es_to_ru_refs_with_codex(
         max_workers=max_workers,
         prompt_mode="ru_refs_b2plus",
         context=context,
+        backend=backend,
     )

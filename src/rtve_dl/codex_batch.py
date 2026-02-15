@@ -17,6 +17,12 @@ if TYPE_CHECKING:
     from rtve_dl.telemetry import TelemetryDB
 
 
+_CLAUDE_MODEL_ALIASES = {
+    "sonnet": "claude-sonnet-4-20250514",
+    "opus": "claude-opus-4-5-20251101",
+}
+
+
 @dataclass(frozen=True)
 class CodexChunkPaths:
     in_jsonl: Path
@@ -51,6 +57,17 @@ def _now_iso() -> str:
 def _ensure_codex_on_path() -> None:
     if subprocess.run(["codex", "--version"], capture_output=True, text=True).returncode != 0:
         raise RuntimeError("codex CLI not found on PATH")
+
+
+def _ensure_claude_on_path() -> None:
+    if subprocess.run(["claude", "--version"], capture_output=True, text=True).returncode != 0:
+        raise RuntimeError("claude CLI not found on PATH")
+
+
+def _resolve_claude_model(model: str | None) -> str:
+    if model is None:
+        return _CLAUDE_MODEL_ALIASES["sonnet"]
+    return _CLAUDE_MODEL_ALIASES.get(model, model)
 
 
 def _load_prompt_template(prompt_mode: str) -> str:
@@ -102,7 +119,7 @@ def _tsv_unescape(value: str) -> str:
     return "".join(out)
 
 
-def _parse_tsv_map(path: Path) -> dict[str, str]:
+def _parse_tsv_map(path: Path, *, allow_id_only: bool = False) -> dict[str, str]:
     out: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         row = line.rstrip("\r")
@@ -110,11 +127,26 @@ def _parse_tsv_map(path: Path) -> dict[str, str]:
             continue
         parts = row.split("\t")
         if len(parts) < 2:
+            if allow_id_only and len(parts) == 1:
+                cue_id = _tsv_unescape(parts[0]).strip()
+                if cue_id:
+                    out[cue_id] = ""
             continue
         cue_id = _tsv_unescape(parts[0]).strip()
         text = _tsv_unescape(parts[1])
         if cue_id:
             out[cue_id] = text
+    return out
+
+
+def _allow_id_only_rows(target_language: str) -> bool:
+    # ru_refs prompt can legitimately produce "id" with empty gloss value.
+    # We accept that as id<TAB>"" for better robustness with mini model.
+    return target_language.strip().lower() == "russianrefs"
+
+
+def _parse_codex_tsv_output(path: Path, *, target_language: str) -> dict[str, str]:
+    out = _parse_tsv_map(path, allow_id_only=_allow_id_only_rows(target_language))
     return out
 
 
@@ -202,6 +234,7 @@ def chunk_cues(
     chunk_cues: int,
     base_path: Path,
     io_tag: str,
+    use_context: bool = True,
 ) -> list[CodexChunkPaths]:
     if chunk_cues <= 0:
         raise ValueError("chunk_cues must be positive")
@@ -224,20 +257,25 @@ def chunk_cues(
         with in_path.open("w", encoding="utf-8") as f_jsonl, in_tsv.open("w", encoding="utf-8") as f_tsv:
             for j, (cue_id, text) in enumerate(part):
                 f_jsonl.write(json.dumps({"id": cue_id, "text": text}, ensure_ascii=False) + "\n")
-                global_idx = i + j
-                left = cues[global_idx - 1][1] if global_idx > 0 else ""
-                right = cues[global_idx + 1][1] if (global_idx + 1) < len(cues) else ""
-                f_tsv.write(
-                    "\t".join(
-                        [
-                            _tsv_escape(cue_id),
-                            _tsv_escape(text),
-                            _tsv_escape(left),
-                            _tsv_escape(right),
-                        ]
+                if use_context:
+                    global_idx = i + j
+                    left = cues[global_idx - 1][1] if global_idx > 0 else ""
+                    right = cues[global_idx + 1][1] if (global_idx + 1) < len(cues) else ""
+                    f_tsv.write(
+                        "\t".join(
+                            [
+                                _tsv_escape(cue_id),
+                                _tsv_escape(text),
+                                _tsv_escape(left),
+                                _tsv_escape(right),
+                            ]
+                        )
+                        + "\n"
                     )
-                    + "\n"
-                )
+                else:
+                    f_tsv.write(
+                        "\t".join([_tsv_escape(cue_id), _tsv_escape(text)]) + "\n"
+                    )
     return out
 
 
@@ -249,21 +287,33 @@ def run_codex_chunk(
     prompt_mode: str,
     context: CodexExecutionContext | None = None,
     fallback_used: bool = False,
+    backend: str = "claude",
 ) -> None:
-    _ensure_codex_on_path()
     payload = chunk.in_tsv.read_text(encoding="utf-8")
     prompt = _build_prompt(tsv_payload=payload, prompt_mode=prompt_mode)
 
-    cmd = ["codex", "exec", "-s", "read-only", "--output-last-message", str(chunk.out_tsv)]
-    if model:
-        cmd += ["-m", model]
-    cmd.append("-")
+    if backend == "claude":
+        _ensure_claude_on_path()
+        resolved_model = _resolve_claude_model(model)
+        cmd = ["claude", "-p", "--print", "--model", resolved_model]
+        debug("claude: " + " ".join(cmd))
+    else:
+        _ensure_codex_on_path()
+        cmd = ["codex", "exec", "-s", "read-only", "--output-last-message", str(chunk.out_tsv)]
+        if model:
+            cmd += ["-m", model]
+        cmd.append("-")
+        debug("codex exec: " + " ".join(cmd))
 
-    debug("codex exec: " + " ".join(cmd))
-    with stage(f"codex:{target_language.lower()}:chunk:{chunk.out_jsonl.name}"):
+    with stage(f"{backend}:{target_language.lower()}:chunk:{chunk.out_jsonl.name}"):
         started_at = _now_iso()
         t0 = time.time()
         res = subprocess.run(cmd, input=prompt, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+        # For Claude backend, write stdout to out_tsv (codex writes directly via --output-last-message)
+        if backend == "claude" and res.returncode == 0:
+            chunk.out_tsv.write_text(res.stdout or "", encoding="utf-8")
+
         total_tokens = _parse_total_tokens(res.stdout or "")
         usage_source = "stdout_tokens_used" if total_tokens is not None else "missing"
         usage_parse_ok = total_tokens is not None
@@ -295,28 +345,40 @@ def run_codex_chunk(
                 usage_parse_ok=usage_parse_ok,
             )
             out = (res.stdout or "").lower()
-            if (
-                "401 unauthorized" in out
-                or "provided authentication token is expired" in out
-                or "refresh_token_reused" in out
-            ):
-                raise RuntimeError(
-                    "codex exec failed due to expired/invalid auth. "
-                    "Run `codex logout` then `codex login --device-auth` (or `printenv OPENAI_API_KEY | codex login --with-api-key`) "
-                    f"and retry. Details: {log_path}"
-                )
+            # Auth error detection for both backends
+            if backend == "claude":
+                if (
+                    "api key" in out
+                    or "unauthorized" in out
+                    or "authentication" in out
+                    or "invalid_api_key" in out
+                ):
+                    raise RuntimeError(
+                        f"claude failed due to auth error. Check ANTHROPIC_API_KEY. Details: {log_path}"
+                    )
+            else:
+                if (
+                    "401 unauthorized" in out
+                    or "provided authentication token is expired" in out
+                    or "refresh_token_reused" in out
+                ):
+                    raise RuntimeError(
+                        "codex exec failed due to expired/invalid auth. "
+                        "Run `codex logout` then `codex login --device-auth` (or `printenv OPENAI_API_KEY | codex login --with-api-key`) "
+                        f"and retry. Details: {log_path}"
+                    )
             if "429" in out or "rate limit" in out or "too many requests" in out:
-                raise RuntimeError(f"codex rate limited; see {log_path}")
-            raise RuntimeError(f"codex exec failed (exit {res.returncode}); see {log_path}")
+                raise RuntimeError(f"{backend} rate limited; see {log_path}")
+            raise RuntimeError(f"{backend} failed (exit {res.returncode}); see {log_path}")
 
-        parsed = _parse_tsv_map(chunk.out_tsv)
+        parsed = _parse_codex_tsv_output(chunk.out_tsv, target_language=target_language)
         if not parsed:
             parsed = _parse_jsonl_map(chunk.out_tsv)
         if not parsed:
             log_path = Path(str(chunk.out_jsonl) + ".log")
             raw_out = chunk.out_tsv.read_text(encoding="utf-8", errors="replace")
             log_path.write_text(
-                "codex returned empty/unparseable output\n\n----raw output----\n" + raw_out,
+                f"{backend} returned empty/unparseable output\n\n----raw output----\n" + raw_out,
                 encoding="utf-8",
                 errors="replace",
             )
@@ -334,7 +396,7 @@ def run_codex_chunk(
                 usage_source=usage_source,
                 usage_parse_ok=usage_parse_ok,
             )
-            raise RuntimeError(f"codex empty/unparseable output; see {log_path}")
+            raise RuntimeError(f"{backend} empty/unparseable output; see {log_path}")
         _write_jsonl_map(chunk.out_jsonl, parsed)
         _telemetry_record(
             context=context,
@@ -361,6 +423,7 @@ def _run_codex_chunks(
     max_workers: int,
     prompt_mode: str,
     context: CodexExecutionContext | None,
+    backend: str = "claude",
 ) -> None:
     if not chunks:
         return
@@ -386,6 +449,7 @@ def _run_codex_chunks(
                         prompt_mode=prompt_mode,
                         context=context,
                         fallback_used=use_fallback,
+                        backend=backend,
                     )
                 except Exception as e:
                     failed.append((ch, e if isinstance(e, Exception) else RuntimeError(str(e))))
@@ -400,6 +464,7 @@ def _run_codex_chunks(
                         prompt_mode=prompt_mode,
                         context=context,
                         fallback_used=use_fallback,
+                        backend=backend,
                     ): ch
                     for ch in pending
                 }
@@ -415,7 +480,7 @@ def _run_codex_chunks(
 
         if not fallback_done and fallback_model and fallback_model != model:
             debug(
-                f"codex:{target_language.lower()}: mini first-pass failed for {len(failed)} chunk(s), "
+                f"{backend}:{target_language.lower()}: first-pass failed for {len(failed)} chunk(s), "
                 "retrying failed chunks with fallback model"
             )
             pending = [ch for ch, _ in failed]
@@ -427,7 +492,7 @@ def _run_codex_chunks(
             workers = 2
             pending = [ch for ch, _ in failed]
             debug(
-                f"codex:{target_language.lower()}: backing off parallel chunks to workers=2 "
+                f"{backend}:{target_language.lower()}: backing off parallel chunks to workers=2 "
                 f"after rate limit; retrying {len(pending)} chunk(s)"
             )
             continue
@@ -448,8 +513,10 @@ def translate_es_with_codex(
     max_workers: int,
     prompt_mode: str = "translate_ru",
     context: CodexExecutionContext | None = None,
+    use_context: bool = True,
+    backend: str = "claude",
 ) -> dict[str, str]:
-    chunks = chunk_cues(cues, chunk_cues=chunk_size_cues, base_path=base_path, io_tag=io_tag)
+    chunks = chunk_cues(cues, chunk_cues=chunk_size_cues, base_path=base_path, io_tag=io_tag, use_context=use_context)
 
     pending: list[CodexChunkPaths] = []
     for ch in chunks:
@@ -464,18 +531,19 @@ def translate_es_with_codex(
         max_workers=max_workers,
         prompt_mode=prompt_mode,
         context=context,
+        backend=backend,
     )
 
     merged: dict[str, str] = {}
     for ch in chunks:
         if not ch.out_jsonl.exists():
-            raise RuntimeError(f"missing codex output chunk: {ch.out_jsonl}")
+            raise RuntimeError(f"missing {backend} output chunk: {ch.out_jsonl}")
         merged.update(_parse_jsonl_map(ch.out_jsonl))
 
     want = {i for i, _ in cues}
     missing = sorted(list(want - set(merged.keys())))
     if missing:
-        debug(f"codex output missing {len(missing)} ids; retrying (example: {missing[:5]})")
+        debug(f"{backend} output missing {len(missing)} ids; retrying (example: {missing[:5]})")
         attempt = 1
         for sz in [min(50, chunk_size_cues), 10, 1]:
             if not missing:
@@ -483,7 +551,7 @@ def translate_es_with_codex(
             missing_set = set(missing)
             missing_cues = [(i, t) for i, t in cues if i in missing_set]
             retry_base = Path(str(base_path) + f".retry{attempt}")
-            retry_chunks = chunk_cues(missing_cues, chunk_cues=sz, base_path=retry_base, io_tag=io_tag)
+            retry_chunks = chunk_cues(missing_cues, chunk_cues=sz, base_path=retry_base, io_tag=io_tag, use_context=use_context)
             retry_ctx = context
             if retry_ctx is not None:
                 retry_ctx = CodexExecutionContext(
@@ -501,6 +569,7 @@ def translate_es_with_codex(
                 max_workers=max_workers,
                 prompt_mode=prompt_mode,
                 context=retry_ctx,
+                backend=backend,
             )
             for ch in retry_chunks:
                 merged.update(_parse_jsonl_map(ch.out_jsonl))
@@ -508,5 +577,5 @@ def translate_es_with_codex(
             attempt += 1
 
     if missing:
-        raise RuntimeError(f"codex output missing {len(missing)} ids after retries (example: {missing[:5]})")
+        raise RuntimeError(f"{backend} output missing {len(missing)} ids after retries (example: {missing[:5]})")
     return merged
