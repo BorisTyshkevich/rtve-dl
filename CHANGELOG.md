@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.5
+
+- Added `--force-asr` mode for generating ASR-based subtitles even when RTVE provides Spanish subtitles:
+  - Always runs ASR and builds parallel ASR-based translations
+  - Skips regenerating RTVE-based translations (saves API costs)
+  - Includes cached RTVE translations from previous runs if they exist
+  - Default subtitle track becomes `ES+RU refs/ASR`
+- Added ASR-specific cache directories:
+  - `tmp/<slug>/codex/en_asr/`
+  - `tmp/<slug>/codex/ru_asr/`
+  - `tmp/<slug>/codex/ru_ref_asr/`
+- Added ASR-specific SRT file naming:
+  - `*.spa.asr.srt`, `*.eng.asr.srt`, `*.rus.asr.srt`
+  - `*.spa_rus.asr.srt`, `*.spa_rus_full.asr.srt`
+- Updated track naming to include MT suffix for translations:
+  - Normal mode: `{model} MT` for machine-translated tracks
+  - Force-ASR mode: `{model} MT/ASR` for ASR-based translations
+- Extended reset layer handling to clear ASR-based cache files.
+
 ## 0.2.4
 
 - Added Spanish subtitle post-processing stage (`es_clean`) via Codex prompt templates:

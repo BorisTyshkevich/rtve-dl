@@ -162,6 +162,26 @@ rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S9 \
 
 If a season run with reset crashes, restart without `--reset-layer` to continue from already rebuilt cache.
 
+## Force ASR Mode
+
+Use `--force-asr` to generate ASR-based subtitles even when RTVE provides Spanish subtitles.
+This creates a parallel set of translations from the ASR source, useful for comparing ASR vs RTVE quality.
+
+```bash
+rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S1 \
+  --series-slug cuentameT8 --force-asr
+```
+
+In force-asr mode:
+- ASR subtitles are always generated and translated
+- RTVE-based translations are NOT regenerated (saves API costs)
+- Cached RTVE translations from previous runs are included if they exist
+- Default subtitle track is `ES+RU refs/ASR`
+
+Track naming:
+- Normal mode: `{model} MT` for translations, `ES+RU refs` (default)
+- Force-ASR mode: `{model} MT/ASR` for ASR-based translations, `ES+RU refs/ASR` (default)
+
 ## ASR Fallback
 
 If RTVE has no ES subtitles and `--asr-if-missing` is enabled (default), ASR generates `*.spa.srt`.

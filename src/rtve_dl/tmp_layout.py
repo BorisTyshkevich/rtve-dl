@@ -16,6 +16,9 @@ class TmpLayout:
     codex_es_clean: Path
     codex_ru: Path
     codex_ru_ref: Path
+    codex_en_asr: Path
+    codex_ru_asr: Path
+    codex_ru_ref_asr: Path
     meta: Path
     meta_legacy: Path
 
@@ -30,6 +33,9 @@ class TmpLayout:
             codex_es_clean=root / "codex" / "es_clean",
             codex_ru=root / "codex" / "ru",
             codex_ru_ref=root / "codex" / "ru_ref",
+            codex_en_asr=root / "codex" / "en_asr",
+            codex_ru_asr=root / "codex" / "ru_asr",
+            codex_ru_ref_asr=root / "codex" / "ru_ref_asr",
             meta=root / "meta",
             meta_legacy=root / "meta" / "legacy",
         )
@@ -43,6 +49,9 @@ class TmpLayout:
         self.codex_es_clean.mkdir(parents=True, exist_ok=True)
         self.codex_ru.mkdir(parents=True, exist_ok=True)
         self.codex_ru_ref.mkdir(parents=True, exist_ok=True)
+        self.codex_en_asr.mkdir(parents=True, exist_ok=True)
+        self.codex_ru_asr.mkdir(parents=True, exist_ok=True)
+        self.codex_ru_ref_asr.mkdir(parents=True, exist_ok=True)
         self.meta.mkdir(parents=True, exist_ok=True)
         self.meta_legacy.mkdir(parents=True, exist_ok=True)
 
@@ -70,6 +79,21 @@ class TmpLayout:
     def srt_bi_full_file(self, base: str) -> Path:
         return self.srt / f"{base}.spa_rus_full.srt"
 
+    def srt_es_asr_file(self, base: str) -> Path:
+        return self.srt / f"{base}.spa.asr.srt"
+
+    def srt_en_asr_file(self, base: str) -> Path:
+        return self.srt / f"{base}.eng.asr.srt"
+
+    def srt_ru_asr_file(self, base: str) -> Path:
+        return self.srt / f"{base}.rus.asr.srt"
+
+    def srt_refs_asr_file(self, base: str) -> Path:
+        return self.srt / f"{base}.spa_rus.asr.srt"
+
+    def srt_bi_full_asr_file(self, base: str) -> Path:
+        return self.srt / f"{base}.spa_rus_full.asr.srt"
+
     def codex_base(self, base: str, track: str) -> Path:
         if track == "en":
             return self.codex_en / f"{base}.en"
@@ -79,6 +103,12 @@ class TmpLayout:
             return self.codex_ru / f"{base}.ru"
         if track == "ru_ref":
             return self.codex_ru_ref / f"{base}.ru_ref"
+        if track == "en_asr":
+            return self.codex_en_asr / f"{base}.en_asr"
+        if track == "ru_asr":
+            return self.codex_ru_asr / f"{base}.ru_asr"
+        if track == "ru_ref_asr":
+            return self.codex_ru_ref_asr / f"{base}.ru_ref_asr"
         raise ValueError(f"unknown codex track: {track}")
 
     def telemetry_db(self) -> Path:

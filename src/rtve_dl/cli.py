@@ -23,6 +23,12 @@ def main(argv: list[str] | None = None) -> int:
         help="If RTVE has no ES subtitles, generate ES subtitles with ASR backend. Default: enabled.",
     )
     p.add_argument(
+        "--force-asr",
+        action="store_true",
+        default=False,
+        help="Generate ASR subtitles even when RTVE has ES subs, build parallel translations from ASR",
+    )
+    p.add_argument(
         "--es-postprocess",
         default=True,
         action=argparse.BooleanOptionalAction,
@@ -194,6 +200,7 @@ def main(argv: list[str] | None = None) -> int:
             es_postprocess_force=a.es_postprocess_force,
             es_postprocess_model=a.es_postprocess_model,
             es_postprocess_chunk_cues=a.es_postprocess_chunk_cues,
+            force_asr=a.force_asr,
             asr_model=a.asr_model,
             asr_device=a.asr_device,
             asr_compute_type=a.asr_compute_type,

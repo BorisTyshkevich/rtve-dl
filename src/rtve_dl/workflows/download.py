@@ -207,25 +207,38 @@ def _reset_selector_layers(*, paths: SeriesPaths, assets: list[SeriesAsset], lay
 
         if "subs-es" in layers:
             _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa.srt", reason="subs-es")
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa.asr.srt", reason="subs-es")
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa.asr_raw.srt", reason="subs-es")
             _safe_unlink(paths.layout.vtt_es_file(asset_id), reason="subs-es")
             _safe_unlink_glob(paths.layout.codex_es_clean, f"{prefix}*.es_clean*", reason="subs-es")
             _safe_unlink_glob(paths.layout.codex_en, f"{prefix}*.en*", reason="subs-es")
             _safe_unlink_glob(paths.layout.codex_ru_ref, f"{prefix}*.ru_ref*", reason="subs-es")
             _safe_unlink_glob(paths.layout.codex_ru, f"{prefix}*.ru*", reason="subs-es")
+            # ASR-based translation caches
+            _safe_unlink_glob(paths.layout.codex_en_asr, f"{prefix}*.en_asr*", reason="subs-es")
+            _safe_unlink_glob(paths.layout.codex_ru_asr, f"{prefix}*.ru_asr*", reason="subs-es")
+            _safe_unlink_glob(paths.layout.codex_ru_ref_asr, f"{prefix}*.ru_ref_asr*", reason="subs-es")
 
         if "subs-en" in layers:
             _safe_unlink_glob(paths.layout.srt, f"{prefix}*.eng.srt", reason="subs-en")
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.eng.asr.srt", reason="subs-en")
             _safe_unlink(paths.layout.vtt_en_file(asset_id), reason="subs-en")
             _safe_unlink_glob(paths.layout.codex_en, f"{prefix}*.en*", reason="subs-en")
+            _safe_unlink_glob(paths.layout.codex_en_asr, f"{prefix}*.en_asr*", reason="subs-en")
 
         if "subs-ru" in layers:
             _safe_unlink_glob(paths.layout.srt, f"{prefix}*.rus.srt", reason="subs-ru")
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.rus.asr.srt", reason="subs-ru")
             _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa_rus_full.srt", reason="subs-ru")
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa_rus_full.asr.srt", reason="subs-ru")
             _safe_unlink_glob(paths.layout.codex_ru, f"{prefix}*.ru*", reason="subs-ru")
+            _safe_unlink_glob(paths.layout.codex_ru_asr, f"{prefix}*.ru_asr*", reason="subs-ru")
 
         if "subs-refs" in layers:
             _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa_rus.srt", reason="subs-refs")
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa_rus.asr.srt", reason="subs-refs")
             _safe_unlink_glob(paths.layout.codex_ru_ref, f"{prefix}*.ru_ref*", reason="subs-refs")
+            _safe_unlink_glob(paths.layout.codex_ru_ref_asr, f"{prefix}*.ru_ref_asr*", reason="subs-refs")
     debug("reset:preflight done")
 
 
@@ -245,7 +258,9 @@ def _collect_local_subs_for_mux(
     translate_en_if_missing: bool,
     es_model_name: str = "RTVE",
     primary_model: str = "sonnet",
-) -> list[tuple[Path, str, str]] | None:
+    force_asr: bool = False,
+) -> tuple[list[tuple[Path, str, str]], str] | None:
+    """Returns (subs_list, default_subtitle_title) or None if required files missing."""
     srt_es = paths.layout.srt_es_file(base)
     srt_en = paths.layout.srt_en_file(base)
     srt_ru = paths.layout.srt_ru_file(base)
@@ -257,10 +272,57 @@ def _collect_local_subs_for_mux(
     _remove_if_empty(srt_bi, kind="srt")
     _remove_if_empty(srt_bi_full, kind="srt")
 
+    if force_asr:
+        # In force_asr mode, we need ASR-based tracks to exist
+        srt_es_asr = paths.layout.srt_es_asr_file(base)
+        srt_en_asr = paths.layout.srt_en_asr_file(base)
+        srt_ru_asr = paths.layout.srt_ru_asr_file(base)
+        srt_bi_asr = paths.layout.srt_refs_asr_file(base)
+        srt_bi_full_asr = paths.layout.srt_bi_full_asr_file(base)
+        _remove_if_empty(srt_es_asr, kind="srt")
+        _remove_if_empty(srt_en_asr, kind="srt")
+        _remove_if_empty(srt_ru_asr, kind="srt")
+        _remove_if_empty(srt_bi_asr, kind="srt")
+        _remove_if_empty(srt_bi_full_asr, kind="srt")
+
+        # Require ASR tracks to exist
+        if not _is_nonempty_file(srt_es_asr):
+            return None
+        if not _is_nonempty_file(srt_en_asr):
+            return None
+        if not _is_nonempty_file(srt_ru_asr) or not _is_nonempty_file(srt_bi_asr) or not _is_nonempty_file(srt_bi_full_asr):
+            return None
+
+        subs: list[tuple[Path, str, str]] = []
+        # RTVE ES if available
+        if _is_nonempty_file(srt_es):
+            subs.append((srt_es, "spa", es_model_name))
+        # RTVE EN if available
+        if _is_nonempty_file(srt_en):
+            # Check if this looks like RTVE or MT
+            subs.append((srt_en, "eng", "RTVE"))
+        # Cached RTVE-based translations
+        if _is_nonempty_file(srt_ru) and _is_nonempty_file(srt_bi) and _is_nonempty_file(srt_bi_full):
+            subs.extend([
+                (srt_ru, "rus", f"{primary_model} MT"),
+                (srt_bi, "spa", "ES+RU refs"),
+                (srt_bi_full, "spa", "ES+RU"),
+            ])
+        # ASR tracks (model name unknown in pre-resolve, use generic)
+        subs.append((srt_es_asr, "spa", "ASR"))
+        subs.extend([
+            (srt_en_asr, "eng", f"{primary_model} MT/ASR"),
+            (srt_ru_asr, "rus", f"{primary_model} MT/ASR"),
+            (srt_bi_asr, "spa", "ES+RU refs/ASR"),
+            (srt_bi_full_asr, "spa", "ES+RU/ASR"),
+        ])
+        return subs, "ES+RU refs/ASR"
+
+    # Normal mode
     if not _is_nonempty_file(srt_es):
         return None
 
-    subs: list[tuple[Path, str, str]] = [(srt_es, "spa", es_model_name)]
+    subs = [(srt_es, "spa", es_model_name)]
     if translate_en_if_missing:
         if not _is_nonempty_file(srt_en):
             return None
@@ -271,12 +333,12 @@ def _collect_local_subs_for_mux(
             return None
         subs.extend(
             [
-                (srt_ru, "rus", primary_model),
+                (srt_ru, "rus", f"{primary_model} MT"),
                 (srt_bi, "spa", "ES+RU refs"),
                 (srt_bi_full, "spa", "ES+RU"),
             ]
         )
-    return subs
+    return subs, "ES+RU refs"
 
 
 def _srt_duration_seconds(srt_path: Path) -> float:
@@ -315,6 +377,7 @@ def download_selector(
     require_ru: bool,
     translate_en_if_missing: bool,
     asr_if_missing: bool,
+    force_asr: bool = False,
     es_postprocess: bool,
     es_postprocess_force: bool,
     es_postprocess_model: str | None,
@@ -442,14 +505,16 @@ def download_selector(
                 return None
 
             # Strict local precheck: if all required mux inputs already exist, skip resolve.
-            local_subs = _collect_local_subs_for_mux(
+            local_result = _collect_local_subs_for_mux(
                 base=base,
                 paths=paths,
                 with_ru=with_ru,
                 translate_en_if_missing=translate_en_if_missing,
                 primary_model=primary_model,
+                force_asr=force_asr,
             )
-            if local_subs is not None and is_valid_mp4(mp4_path) and _mp4_matches_es_srt(mp4_path, srt_es):
+            if local_result is not None and is_valid_mp4(mp4_path) and _mp4_matches_es_srt(mp4_path, srt_es):
+                local_subs, local_default_title = local_result
                 debug(f"local inputs ready (pre-resolve), skipping resolve: {base}")
                 _ep_log(ep_tag, "mux")
                 with stage(f"mux:{a.asset_id}"):
@@ -459,7 +524,7 @@ def download_selector(
                         out_mkv=tmp_out,
                         subs=local_subs,
                         subtitle_delay_ms=effective_subtitle_delay_ms,
-                        default_subtitle_title="ES+RU refs",
+                        default_subtitle_title=local_default_title,
                     )
                     tmp_out.replace(out_mkv)
                 _ep_log(ep_tag, f"done ({time.time() - t0:.1f}s)")
@@ -659,6 +724,218 @@ def download_selector(
                         f"(video={v_dur2:.2f}s subtitles={s_dur:.2f}s)"
                     )
 
+            def _task_asr() -> tuple[list, str]:
+                """Always run ASR and return (cues, model_name). Used in force-asr mode."""
+                srt_es_asr = paths.layout.srt_es_asr_file(base)
+                srt_es_asr_raw = paths.layout.srt / f"{base}.spa.asr_raw.srt"
+                with stage(f"build:srt:es_asr_forced:{a.asset_id}"):
+                    _remove_if_empty(srt_es_asr_raw, kind="srt")
+                    _remove_if_empty(srt_es_asr, kind="srt")
+                    if not _is_nonempty_file(srt_es_asr):
+                        def _write_asr_from_raw() -> None:
+                            if not _is_nonempty_file(srt_es_asr_raw):
+                                raise RuntimeError(f"missing raw ASR srt: {srt_es_asr_raw}")
+                            srt_es_asr.write_text(srt_es_asr_raw.read_text(encoding="utf-8"), encoding="utf-8")
+
+                        def _run_asr_forced() -> None:
+                            if asr_backend == "mlx":
+                                transcribe_es_to_srt_with_mlx_whisper(
+                                    media_path=mp4_path,
+                                    out_srt=srt_es_asr_raw,
+                                    model_repo=asr_mlx_model,
+                                )
+                            elif asr_backend == "whisperx":
+                                transcribe_es_to_srt_with_whisperx(
+                                    media_path=mp4_path,
+                                    out_srt=srt_es_asr_raw,
+                                    model=asr_model,
+                                    device=asr_device,
+                                    compute_type=asr_compute_type,
+                                    batch_size=asr_batch_size,
+                                    vad_method=asr_vad_method,
+                                )
+                            else:
+                                raise RuntimeError(f"unsupported ASR backend: {asr_backend}")
+
+                        if _is_nonempty_file(srt_es_asr_raw):
+                            debug(f"{a.asset_id}: reusing cached raw ASR subtitles: {srt_es_asr_raw}")
+                        else:
+                            try:
+                                _run_asr_forced()
+                            except Exception as e:
+                                msg = str(e).lower()
+                                recoverable = (
+                                    "failed to load audio" in msg
+                                    or "invalid data found when processing input" in msg
+                                    or "no such file or directory" in msg
+                                )
+                                if not recoverable:
+                                    raise
+                                error(f"{a.asset_id}: ASR failed, retrying after forced mp4 re-download")
+                                _task_video(force_redownload=True)
+                                _run_asr_forced()
+                        _write_asr_from_raw()
+                    else:
+                        debug(f"cache hit srt (asr): {srt_es_asr}")
+
+                    asr_cues = parse_srt(srt_es_asr.read_text(encoding="utf-8"))
+                    # Build ASR model name for track title
+                    if asr_backend == "mlx":
+                        asr_model_name_local = asr_mlx_model.split("/")[-1]
+                    else:
+                        asr_model_name_local = f"whisperx-{asr_model}"
+                    return asr_cues, asr_model_name_local
+
+            def _task_en_asr(asr_cues_input: list) -> tuple[Path, str, str]:
+                """Translate ASR cues to EN using ASR-specific cache paths."""
+                with stage(f"build:srt:en_mt_asr:{a.asset_id}"):
+                    srt_en_asr = paths.layout.srt_en_asr_file(base)
+                    _remove_if_empty(srt_en_asr, kind="srt")
+                    if not _is_nonempty_file(srt_en_asr):
+                        cue_tasks = [(f"{i}", (c.text or "").strip()) for i, c in enumerate(asr_cues_input) if (c.text or "").strip()]
+                        base_path = paths.layout.codex_base(base, "en_asr")
+                        en_map: dict[str, str] = {}
+                        if cue_tasks:
+                            en_map = translate_es_to_en_with_codex(
+                                cues=cue_tasks,
+                                base_path=base_path,
+                                chunk_size_cues=codex_chunk_cues,
+                                model=primary_model,
+                                fallback_model=fallback_model,
+                                resume=True,
+                                max_workers=jobs_codex_chunks,
+                                context=CodexExecutionContext(
+                                    telemetry=telemetry,
+                                    run_id=run_id,
+                                    episode_id=a.asset_id,
+                                    track_type="en_mt_asr",
+                                    chunk_size=codex_chunk_cues,
+                                ),
+                                backend=translation_backend,
+                            )
+
+                        from rtve_dl.subs.vtt import Cue
+
+                        en_cues = [
+                            Cue(start_ms=c.start_ms, end_ms=c.end_ms, text=en_map.get(f"{i}", ""))
+                            for i, c in enumerate(asr_cues_input)
+                        ]
+                        srt_en_asr.write_text(cues_to_srt(en_cues), encoding="utf-8")
+                    else:
+                        debug(f"cache hit srt (en_asr): {srt_en_asr}")
+                    return (srt_en_asr, "eng", f"{primary_model} MT/ASR")
+
+            def _task_ru_asr(asr_cues_input: list) -> list[tuple[Path, str, str]]:
+                """Translate ASR cues to RU using ASR-specific cache paths."""
+                with stage(f"build:srt:ru_asr:{a.asset_id}"):
+                    srt_ru_asr = paths.layout.srt_ru_asr_file(base)
+                    srt_bi_asr = paths.layout.srt_refs_asr_file(base)
+                    srt_bi_full_asr = paths.layout.srt_bi_full_asr_file(base)
+                    _remove_if_empty(srt_ru_asr, kind="srt")
+                    _remove_if_empty(srt_bi_asr, kind="srt")
+                    _remove_if_empty(srt_bi_full_asr, kind="srt")
+                    cue_tasks = [
+                        (f"{i}", (c.text or "").strip())
+                        for i, c in enumerate(asr_cues_input)
+                        if (c.text or "").strip()
+                    ]
+                    ru_map: dict[str, str] | None = None
+
+                    if not _is_nonempty_file(srt_ru_asr):
+                        base_path = paths.layout.codex_base(base, "ru_asr")
+                        ru_map = {}
+                        if cue_tasks:
+                            ru_map = translate_es_to_ru_with_codex(
+                                cues=cue_tasks,
+                                base_path=base_path,
+                                chunk_size_cues=codex_chunk_cues,
+                                model=primary_model,
+                                fallback_model=fallback_model,
+                                resume=True,
+                                max_workers=jobs_codex_chunks,
+                                context=CodexExecutionContext(
+                                    telemetry=telemetry,
+                                    run_id=run_id,
+                                    episode_id=a.asset_id,
+                                    track_type="ru_full_asr",
+                                    chunk_size=codex_chunk_cues,
+                                ),
+                                backend=translation_backend,
+                            )
+
+                        from rtve_dl.subs.vtt import Cue
+
+                        ru_cues = [
+                            Cue(start_ms=c.start_ms, end_ms=c.end_ms, text=ru_map.get(f"{i}", ""))
+                            for i, c in enumerate(asr_cues_input)
+                        ]
+                        srt_ru_asr.write_text(cues_to_srt(ru_cues), encoding="utf-8")
+                    else:
+                        debug(f"cache hit srt (ru_asr): {srt_ru_asr}")
+
+                    if not _is_nonempty_file(srt_bi_asr):
+                        refs_base_path = paths.layout.codex_base(base, "ru_ref_asr")
+                        refs_map: dict[str, str] = {}
+                        if cue_tasks:
+                            refs_chunk_size = min(400, codex_chunk_cues)
+                            refs_workers = max(1, min(2, jobs_codex_chunks))
+                            refs_map = translate_es_to_ru_refs_with_codex(
+                                cues=cue_tasks,
+                                base_path=refs_base_path,
+                                chunk_size_cues=refs_chunk_size,
+                                model=primary_model,
+                                fallback_model=fallback_model,
+                                resume=True,
+                                max_workers=refs_workers,
+                                context=CodexExecutionContext(
+                                    telemetry=telemetry,
+                                    run_id=run_id,
+                                    episode_id=a.asset_id,
+                                    track_type="ru_refs_asr",
+                                    chunk_size=refs_chunk_size,
+                                ),
+                                backend=translation_backend,
+                            )
+
+                        from rtve_dl.subs.vtt import Cue
+
+                        ref_cues = [
+                            Cue(
+                                start_ms=c.start_ms,
+                                end_ms=c.end_ms,
+                                text=_compose_ref_text((c.text or "").strip(), refs_map.get(f"{i}", "")),
+                            )
+                            for i, c in enumerate(asr_cues_input)
+                        ]
+                        srt_bi_asr.write_text(cues_to_srt(ref_cues), encoding="utf-8")
+                    else:
+                        debug(f"cache hit srt (refs_asr): {srt_bi_asr}")
+
+                    if not _is_nonempty_file(srt_bi_full_asr):
+                        if ru_map is None:
+                            ru_cues_cached = parse_srt(srt_ru_asr.read_text(encoding="utf-8"))
+                            ru_map = {f"{i}": (c.text or "").strip() for i, c in enumerate(ru_cues_cached)}
+
+                        from rtve_dl.subs.vtt import Cue
+
+                        bi_full_cues = [
+                            Cue(
+                                start_ms=c.start_ms,
+                                end_ms=c.end_ms,
+                                text=((c.text or "").strip() + "\n" + (ru_map.get(f"{i}", "") or "").strip()).strip(),
+                            )
+                            for i, c in enumerate(asr_cues_input)
+                        ]
+                        srt_bi_full_asr.write_text(cues_to_srt(bi_full_cues), encoding="utf-8")
+                    else:
+                        debug(f"cache hit srt (bi_full_asr): {srt_bi_full_asr}")
+
+                    return [
+                        (srt_ru_asr, "rus", f"{primary_model} MT/ASR"),
+                        (srt_bi_asr, "spa", "ES+RU refs/ASR"),
+                        (srt_bi_full_asr, "spa", "ES+RU/ASR"),
+                    ]
+
             # ES track title will be set after _task_es() returns the model name
             subs: list[tuple[Path, str, str]] = []
 
@@ -836,13 +1113,87 @@ def download_selector(
                         debug(f"cache hit srt: {srt_bi_full}")
 
                     return [
-                        (srt_ru, "rus", primary_model),
+                        (srt_ru, "rus", f"{primary_model} MT"),
                         (srt_bi, "spa", "ES+RU refs"),
                         (srt_bi_full, "spa", "ES+RU"),
                     ]
 
             _ep_log(ep_tag, "video+es")
-            if parallel:
+            default_subtitle_title = "ES+RU refs"
+
+            if force_asr:
+                # Force-ASR mode: always run ASR, skip generating RTVE-based translations
+                # but include cached RTVE translations if they exist.
+                _task_video()
+                _ensure_mp4_consistent_with_es()
+
+                # Get RTVE ES subtitles if available (for reference track)
+                rtve_es_available = resolved.subtitles_es_vtt is not None
+                if rtve_es_available:
+                    es_cues, _es_source, es_model_name = _task_es()
+                    subs.append((srt_es, "spa", es_model_name))
+
+                # RTVE EN if available
+                if resolved.subtitles_en_vtt:
+                    with stage(f"download:subs:en:{a.asset_id}"):
+                        _download_sub_vtt(http, resolved.subtitles_en_vtt, paths.layout.vtt_en_file(a.asset_id))
+                    with stage(f"build:srt:en:{a.asset_id}"):
+                        en_vtt = paths.layout.vtt_en_file(a.asset_id)
+                        en_cues = parse_vtt(en_vtt.read_text(encoding="utf-8"))
+                        srt_en_rtve = paths.layout.srt_en_file(base)
+                        _remove_if_empty(srt_en_rtve, kind="srt")
+                        if not _is_nonempty_file(srt_en_rtve):
+                            srt_en_rtve.write_text(cues_to_srt(en_cues), encoding="utf-8")
+                        else:
+                            debug(f"cache hit srt: {srt_en_rtve}")
+                        subs.append((srt_en_rtve, "eng", "RTVE"))
+
+                # Check for cached RTVE-based translations (don't regenerate, just include if exist)
+                srt_en = paths.layout.srt_en_file(base)
+                srt_ru = paths.layout.srt_ru_file(base)
+                srt_bi = paths.layout.srt_refs_file(base)
+                srt_bi_full = paths.layout.srt_bi_full_file(base)
+
+                # Only include cached EN MT if not already added as RTVE EN
+                if not resolved.subtitles_en_vtt and _is_nonempty_file(srt_en):
+                    subs.append((srt_en, "eng", f"{primary_model} MT"))
+                if _is_nonempty_file(srt_ru) and _is_nonempty_file(srt_bi) and _is_nonempty_file(srt_bi_full):
+                    subs.extend([
+                        (srt_ru, "rus", f"{primary_model} MT"),
+                        (srt_bi, "spa", "ES+RU refs"),
+                        (srt_bi_full, "spa", "ES+RU"),
+                    ])
+
+                # ASR-based tracks (always generated in force-asr mode)
+                _ep_log(ep_tag, "asr+translations")
+                asr_cues, asr_model_name = _task_asr()
+                srt_es_asr = paths.layout.srt_es_asr_file(base)
+                subs.append((srt_es_asr, "spa", asr_model_name))
+
+                if parallel:
+                    with ThreadPoolExecutor(max_workers=2) as tr_pool:
+                        fut_en_asr = tr_pool.submit(_task_en_asr, asr_cues)
+                        fut_ru_asr = tr_pool.submit(_task_ru_asr, asr_cues)
+                        try:
+                            en_asr_track = fut_en_asr.result()
+                            subs.append(en_asr_track)
+                        except Exception as e:
+                            error(f"{a.asset_id}: EN ASR translation failed (continuing): {e}")
+                        ru_asr_tracks = fut_ru_asr.result()
+                        subs.extend(ru_asr_tracks)
+                else:
+                    try:
+                        en_asr_track = _task_en_asr(asr_cues)
+                        subs.append(en_asr_track)
+                    except Exception as e:
+                        error(f"{a.asset_id}: EN ASR translation failed (continuing): {e}")
+                    subs.extend(_task_ru_asr(asr_cues))
+
+                # Default is ASR-based refs
+                default_subtitle_title = "ES+RU refs/ASR"
+
+            elif parallel:
+                # Normal mode with parallel execution
                 # ES subtitle download can run in parallel with video download.
                 # But ASR fallback requires a fully downloaded MP4, so keep that path sequential.
                 if resolved.subtitles_es_vtt:
@@ -883,6 +1234,7 @@ def download_selector(
                         ru_tracks = fut_ru.result()
                         subs.extend(ru_tracks)
             else:
+                # Normal mode without parallel execution
                 _task_video()
                 es_cues, _es_source, es_model_name = _task_es()
                 subs.append((srt_es, "spa", es_model_name))
@@ -904,7 +1256,7 @@ def download_selector(
                     out_mkv=tmp_out,
                     subs=subs,
                     subtitle_delay_ms=effective_subtitle_delay_ms,
-                    default_subtitle_title="ES+RU refs",
+                    default_subtitle_title=default_subtitle_title,
                 )
                 tmp_out.replace(out_mkv)
             _ep_log(ep_tag, f"done ({time.time() - t0:.1f}s)")
