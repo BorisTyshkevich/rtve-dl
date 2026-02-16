@@ -243,6 +243,8 @@ def _collect_local_subs_for_mux(
     paths: SeriesPaths,
     with_ru: bool,
     translate_en_if_missing: bool,
+    es_model_name: str = "RTVE",
+    primary_model: str = "sonnet",
 ) -> list[tuple[Path, str, str]] | None:
     srt_es = paths.layout.srt_es_file(base)
     srt_en = paths.layout.srt_en_file(base)
@@ -258,19 +260,20 @@ def _collect_local_subs_for_mux(
     if not _is_nonempty_file(srt_es):
         return None
 
-    subs: list[tuple[Path, str, str]] = [(srt_es, "spa", "Spanish")]
+    subs: list[tuple[Path, str, str]] = [(srt_es, "spa", es_model_name)]
     if translate_en_if_missing:
         if not _is_nonempty_file(srt_en):
             return None
-        subs.append((srt_en, "eng", "English"))
+        # For pre-resolved path we don't know EN source, use generic MT label
+        subs.append((srt_en, "eng", f"{primary_model} MT"))
     if with_ru:
         if not _is_nonempty_file(srt_ru) or not _is_nonempty_file(srt_bi) or not _is_nonempty_file(srt_bi_full):
             return None
         subs.extend(
             [
-                (srt_ru, "rus", "Russian"),
-                (srt_bi, "spa", "Spanish|RU refs"),
-                (srt_bi_full, "spa", "Spanish|Russian (Full)"),
+                (srt_ru, "rus", primary_model),
+                (srt_bi, "spa", "ES+RU refs"),
+                (srt_bi_full, "spa", "ES+RU"),
             ]
         )
     return subs
@@ -444,6 +447,7 @@ def download_selector(
                 paths=paths,
                 with_ru=with_ru,
                 translate_en_if_missing=translate_en_if_missing,
+                primary_model=primary_model,
             )
             if local_subs is not None and is_valid_mp4(mp4_path) and _mp4_matches_es_srt(mp4_path, srt_es):
                 debug(f"local inputs ready (pre-resolve), skipping resolve: {base}")
@@ -455,7 +459,7 @@ def download_selector(
                         out_mkv=tmp_out,
                         subs=local_subs,
                         subtitle_delay_ms=effective_subtitle_delay_ms,
-                        default_subtitle_title="Spanish|RU refs",
+                        default_subtitle_title="ES+RU refs",
                     )
                     tmp_out.replace(out_mkv)
                 _ep_log(ep_tag, f"done ({time.time() - t0:.1f}s)")
@@ -553,7 +557,8 @@ def download_selector(
                     srt_es.write_text(cues_to_srt(clean_cues), encoding="utf-8")
                     return clean_cues
 
-            def _task_es() -> tuple[list, str]:
+            def _task_es() -> tuple[list, str, str]:
+                """Returns (cues, source, model_name) for ES subtitles."""
                 if resolved.subtitles_es_vtt:
                     with stage(f"download:subs:es:{a.asset_id}"):
                         es_vtt = paths.layout.vtt_es_file(a.asset_id)
@@ -566,7 +571,7 @@ def download_selector(
                         else:
                             debug(f"cache hit srt: {srt_es}")
                     es_cues_local = _run_es_postprocess(es_cues_local=es_cues_local, source="rtve")
-                    return es_cues_local, "rtve"
+                    return es_cues_local, "rtve", "RTVE"
 
                 if not asr_if_missing:
                     raise RuntimeError(
@@ -628,7 +633,12 @@ def download_selector(
                                 pass
                     es_cues_local = parse_srt(srt_es.read_text(encoding="utf-8"))
                     es_cues_local = _run_es_postprocess(es_cues_local=es_cues_local, source="asr")
-                    return es_cues_local, "asr"
+                    # Build ASR model name for track title
+                    if asr_backend == "mlx":
+                        asr_model_name = asr_mlx_model.split("/")[-1]  # e.g. "whisper-small-mlx"
+                    else:
+                        asr_model_name = f"whisperx-{asr_model}"  # e.g. "whisperx-large-v3"
+                    return es_cues_local, "asr", asr_model_name
 
             def _ensure_mp4_consistent_with_es() -> None:
                 if not _is_nonempty_file(srt_es):
@@ -649,7 +659,8 @@ def download_selector(
                         f"(video={v_dur2:.2f}s subtitles={s_dur:.2f}s)"
                     )
 
-            subs = [(srt_es, "spa", "Spanish")]
+            # ES track title will be set after _task_es() returns the model name
+            subs: list[tuple[Path, str, str]] = []
 
             def _task_en() -> tuple[Path, str, str] | None:
                 if resolved.subtitles_en_vtt:
@@ -664,7 +675,7 @@ def download_selector(
                             srt_en.write_text(cues_to_srt(en_cues), encoding="utf-8")
                         else:
                             debug(f"cache hit srt: {srt_en}")
-                        return (srt_en, "eng", "English")
+                        return (srt_en, "eng", "RTVE")
 
                 if not translate_en_if_missing:
                     return None
@@ -708,7 +719,7 @@ def download_selector(
                         srt_en.write_text(cues_to_srt(en_cues), encoding="utf-8")
                     else:
                         debug(f"cache hit srt: {srt_en}")
-                    return (srt_en, "eng", "English (MT)")
+                    return (srt_en, "eng", f"{primary_model} MT")
 
             def _task_ru() -> list[tuple[Path, str, str]]:
                 if not with_ru:
@@ -825,9 +836,9 @@ def download_selector(
                         debug(f"cache hit srt: {srt_bi_full}")
 
                     return [
-                        (srt_ru, "rus", "Russian"),
-                        (srt_bi, "spa", "Spanish|RU refs"),
-                        (srt_bi_full, "spa", "Spanish|Russian (Full)"),
+                        (srt_ru, "rus", primary_model),
+                        (srt_bi, "spa", "ES+RU refs"),
+                        (srt_bi_full, "spa", "ES+RU"),
                     ]
 
             _ep_log(ep_tag, "video+es")
@@ -837,7 +848,8 @@ def download_selector(
                 if resolved.subtitles_es_vtt:
                     with ThreadPoolExecutor(max_workers=1) as video_pool:
                         video_future = video_pool.submit(_task_video)
-                        es_cues, _es_source = _task_es()
+                        es_cues, _es_source, es_model_name = _task_es()
+                        subs.append((srt_es, "spa", es_model_name))
                         video_future.result()
                         _ensure_mp4_consistent_with_es()
                         _ep_log(ep_tag, "translations")
@@ -855,7 +867,8 @@ def download_selector(
                             subs.extend(ru_tracks)
                 else:
                     _task_video()
-                    es_cues, _es_source = _task_es()
+                    es_cues, _es_source, es_model_name = _task_es()
+                    subs.append((srt_es, "spa", es_model_name))
                     _ensure_mp4_consistent_with_es()
                     _ep_log(ep_tag, "translations")
                     with ThreadPoolExecutor(max_workers=2) as tr_pool:
@@ -871,7 +884,8 @@ def download_selector(
                         subs.extend(ru_tracks)
             else:
                 _task_video()
-                es_cues, _es_source = _task_es()
+                es_cues, _es_source, es_model_name = _task_es()
+                subs.append((srt_es, "spa", es_model_name))
                 _ensure_mp4_consistent_with_es()
                 _ep_log(ep_tag, "translations")
                 try:
@@ -890,7 +904,7 @@ def download_selector(
                     out_mkv=tmp_out,
                     subs=subs,
                     subtitle_delay_ms=effective_subtitle_delay_ms,
-                    default_subtitle_title="Spanish|RU refs",
+                    default_subtitle_title="ES+RU refs",
                 )
                 tmp_out.replace(out_mkv)
             _ep_log(ep_tag, f"done ({time.time() - t0:.1f}s)")
