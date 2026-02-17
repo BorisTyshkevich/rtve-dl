@@ -57,6 +57,10 @@ def transcribe_es_to_srt_with_mlx_whisper(
                     language="es",
                     word_timestamps=False,
                     verbose=False,
+                    # Anti-hallucination settings
+                    condition_on_previous_text=False,  # Prevents repetition loops
+                    compression_ratio_threshold=2.0,   # Lower = stricter loop detection (default 2.4)
+                    no_speech_threshold=0.5,           # Filter silence segments (default 0.6)
                 )
             break
         except Exception as e:

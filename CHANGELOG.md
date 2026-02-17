@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.6
+
+- Reworked RU refs generation/output to inline annotation mode:
+  - `ru_refs` prompt now expects full Spanish cue text with inline Russian glosses in brackets.
+  - Added explicit good/bad examples to reduce glossary-list regressions.
+  - Added cue-local refs behavior (`use_context=False`) to avoid neighboring cue bleed.
+- Hardened refs parsing/composition path:
+  - TSV parser now preserves all columns after `id` to tolerate model output with extra tabs.
+  - Refs composer now accepts only sentence-like inline annotations and falls back to original ES cue for invalid/list-style outputs.
+- Updated MKV subtitle language tags for bilingual tracks:
+  - `ES+RU refs` / `ES+RU refs/ASR` -> `spa`
+  - `ES+RU` / `ES+RU/ASR` -> `rus`
+- Added ASR hallucination cleanup improvements:
+  - new `subs/dedup.py` with within-cue and cross-cue repetition collapse.
+  - integrated deduplication in ASR subtitle paths.
+  - tuned MLX Whisper anti-hallucination decode settings.
+- Added RU refs prompt test suite for fast manual iteration:
+  - `tools/test_ru_refs_prompt.sh` (Codex/Claude backend switch, strict validator, output normalization).
+  - fixtures: `tools/fixtures/ru_refs_446.tsv`, `tools/fixtures/ru_refs_small.tsv` (+ expected notes files).
+  - docs: `docs/prompt_tests.md`.
+- Prompt/reporting updates:
+  - RU prompt templates updated for better loan-word translation behavior.
+  - SQL reports extended with yesterday-focused telemetry sections.
+
 ## 0.2.5
 
 - Added `--force-asr` mode for generating ASR-based subtitles even when RTVE provides Spanish subtitles:

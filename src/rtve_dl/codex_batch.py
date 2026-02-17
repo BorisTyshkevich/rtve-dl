@@ -133,7 +133,9 @@ def _parse_tsv_map(path: Path, *, allow_id_only: bool = False) -> dict[str, str]
                     out[cue_id] = ""
             continue
         cue_id = _tsv_unescape(parts[0]).strip()
-        text = _tsv_unescape(parts[1])
+        # Some model outputs include stray extra tabs in value; treat everything
+        # after id as the value instead of truncating at the first tab.
+        text = _tsv_unescape("\t".join(parts[1:]))
         if cue_id:
             out[cue_id] = text
     return out

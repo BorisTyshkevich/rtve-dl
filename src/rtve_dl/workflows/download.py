@@ -14,6 +14,7 @@ from rtve_dl.rtve.resolve import RtveResolver
 from rtve_dl.subs.srt import cues_to_srt
 from rtve_dl.subs.srt_parse import parse_srt
 from rtve_dl.subs.vtt import parse_vtt
+from rtve_dl.subs.dedup import deduplicate_asr_hallucinations
 from rtve_dl.subs.delay_auto import estimate_series_delay_ms
 from rtve_dl.log import debug, error, stage
 from rtve_dl.codex_ru import translate_es_to_ru_with_codex
@@ -306,7 +307,7 @@ def _collect_local_subs_for_mux(
             subs.extend([
                 (srt_ru, "rus", f"{primary_model} MT"),
                 (srt_bi, "spa", "ES+RU refs"),
-                (srt_bi_full, "spa", "ES+RU"),
+                (srt_bi_full, "rus", "ES+RU"),
             ])
         # ASR tracks (model name unknown in pre-resolve, use generic)
         subs.append((srt_es_asr, "spa", "ASR"))
@@ -314,7 +315,7 @@ def _collect_local_subs_for_mux(
             (srt_en_asr, "eng", f"{primary_model} MT/ASR"),
             (srt_ru_asr, "rus", f"{primary_model} MT/ASR"),
             (srt_bi_asr, "spa", "ES+RU refs/ASR"),
-            (srt_bi_full_asr, "spa", "ES+RU/ASR"),
+            (srt_bi_full_asr, "rus", "ES+RU/ASR"),
         ])
         return subs, "ES+RU refs/ASR"
 
@@ -335,7 +336,7 @@ def _collect_local_subs_for_mux(
             [
                 (srt_ru, "rus", f"{primary_model} MT"),
                 (srt_bi, "spa", "ES+RU refs"),
-                (srt_bi_full, "spa", "ES+RU"),
+                (srt_bi_full, "rus", "ES+RU"),
             ]
         )
     return subs, "ES+RU refs"
@@ -360,11 +361,64 @@ def _mp4_matches_es_srt(mp4_path: Path, srt_es_path: Path, *, min_ratio: float =
 
 
 def _compose_ref_text(es_text: str, ru_refs: str) -> str:
+    """
+    Build refs cue text in inline mode:
+    - preferred: full Spanish sentence with inline RU brackets from model output
+    - fallback: original Spanish sentence when output is empty or invalid
+    """
     es = (es_text or "").strip()
-    refs = (ru_refs or "").strip()
-    if not refs:
+    candidate = _normalize_ru_refs_candidate(ru_refs)
+    if not candidate:
         return es
-    return f"{es}\n({refs})" if es else f"({refs})"
+    if _looks_like_inline_annotated_spanish(es, candidate):
+        return candidate
+    return es
+
+
+def _norm_ref_match_text(s: str) -> str:
+    t = (s or "").strip().lower()
+    t = re.sub(r"\W+", " ", t, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _normalize_ru_refs_candidate(raw: str | None) -> str:
+    t = (raw or "").strip()
+    if not t:
+        return ""
+    # Guard against stray extra TSV columns from model output.
+    if "\t" in t:
+        t = " ".join(x.strip() for x in t.split("\t") if x.strip())
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _spanish_tokens(s: str) -> set[str]:
+    return set(re.findall(r"[a-záéíóúñü]+", (s or "").lower()))
+
+
+def _looks_like_inline_annotated_spanish(es_text: str, candidate: str) -> bool:
+    es = (es_text or "").strip()
+    out = (candidate or "").strip()
+    if not out:
+        return False
+
+    # Reject old list-style refs payloads.
+    if ";" in out and "(" not in out and ")" not in out:
+        return False
+
+    es_tokens = _spanish_tokens(es)
+    out_tokens = _spanish_tokens(out)
+    overlap = len(es_tokens & out_tokens)
+    min_overlap = 1 if len(es_tokens) <= 3 else 2
+    if overlap < min_overlap:
+        return False
+
+    # If brackets are present they should contain Cyrillic glosses.
+    if "(" in out or ")" in out:
+        if not re.search(r"\([^\)]*[А-Яа-яЁё][^\)]*\)", out):
+            return False
+
+    return True
 
 
 def download_selector(
@@ -697,6 +751,8 @@ def download_selector(
                             except OSError:
                                 pass
                     es_cues_local = parse_srt(srt_es.read_text(encoding="utf-8"))
+                    # Remove ASR repetition hallucinations before further processing
+                    es_cues_local = deduplicate_asr_hallucinations(es_cues_local)
                     es_cues_local = _run_es_postprocess(es_cues_local=es_cues_local, source="asr")
                     # Build ASR model name for track title
                     if asr_backend == "mlx":
@@ -779,6 +835,8 @@ def download_selector(
                         debug(f"cache hit srt (asr): {srt_es_asr}")
 
                     asr_cues = parse_srt(srt_es_asr.read_text(encoding="utf-8"))
+                    # Remove ASR repetition hallucinations
+                    asr_cues = deduplicate_asr_hallucinations(asr_cues)
                     # Build ASR model name for track title
                     if asr_backend == "mlx":
                         asr_model_name_local = asr_mlx_model.split("/")[-1]
@@ -933,7 +991,7 @@ def download_selector(
                     return [
                         (srt_ru_asr, "rus", f"{primary_model} MT/ASR"),
                         (srt_bi_asr, "spa", "ES+RU refs/ASR"),
-                        (srt_bi_full_asr, "spa", "ES+RU/ASR"),
+                        (srt_bi_full_asr, "rus", "ES+RU/ASR"),
                     ]
 
             # ES track title will be set after _task_es() returns the model name
@@ -1115,7 +1173,7 @@ def download_selector(
                     return [
                         (srt_ru, "rus", f"{primary_model} MT"),
                         (srt_bi, "spa", "ES+RU refs"),
-                        (srt_bi_full, "spa", "ES+RU"),
+                        (srt_bi_full, "rus", "ES+RU"),
                     ]
 
             _ep_log(ep_tag, "video+es")
@@ -1161,7 +1219,7 @@ def download_selector(
                     subs.extend([
                         (srt_ru, "rus", f"{primary_model} MT"),
                         (srt_bi, "spa", "ES+RU refs"),
-                        (srt_bi_full, "spa", "ES+RU"),
+                        (srt_bi_full, "rus", "ES+RU"),
                     ])
 
                 # ASR-based tracks (always generated in force-asr mode)

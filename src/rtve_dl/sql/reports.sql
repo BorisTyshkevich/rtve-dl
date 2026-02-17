@@ -104,3 +104,50 @@ FROM report_codex_chunks c
 GROUP BY hour_bucket
 ORDER BY hour_bucket DESC
 LIMIT 72;
+
+-- Yesterday-focused token usage snapshots (local time in SQLite date()).
+SELECT 'yesterday_summary' AS section;
+SELECT
+  date('now', '-1 day') AS day,
+  COUNT(*) AS chunks_total,
+  SUM(COALESCE(c.total_tokens, 0)) AS total_tokens,
+  SUM(CASE WHEN c.ok = 0 THEN 1 ELSE 0 END) AS failed_chunks,
+  SUM(CASE WHEN c.usage_parse_ok = 1 THEN 1 ELSE 0 END) AS chunks_with_usage,
+  ROUND(
+    100.0 * SUM(CASE WHEN c.usage_parse_ok = 1 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0),
+    2
+  ) AS usage_coverage_pct
+FROM report_codex_chunks c
+WHERE date(c.started_at) = date('now', '-1 day');
+
+SELECT 'yesterday_by_track' AS section;
+SELECT
+  date('now', '-1 day') AS day,
+  c.track_type,
+  COUNT(*) AS chunks,
+  SUM(COALESCE(c.total_tokens, 0)) AS total_tokens,
+  SUM(CASE WHEN c.ok = 0 THEN 1 ELSE 0 END) AS failed_chunks,
+  ROUND(
+    100.0 * SUM(CASE WHEN c.ok = 0 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0),
+    2
+  ) AS failed_pct
+FROM report_codex_chunks c
+WHERE date(c.started_at) = date('now', '-1 day')
+GROUP BY c.track_type
+ORDER BY total_tokens DESC;
+
+SELECT 'yesterday_by_model' AS section;
+SELECT
+  date('now', '-1 day') AS day,
+  COALESCE(c.model, '<default>') AS model,
+  COUNT(*) AS chunks,
+  SUM(COALESCE(c.total_tokens, 0)) AS total_tokens,
+  SUM(CASE WHEN c.ok = 0 THEN 1 ELSE 0 END) AS failed_chunks,
+  ROUND(
+    100.0 * SUM(CASE WHEN c.ok = 0 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0),
+    2
+  ) AS failed_pct
+FROM report_codex_chunks c
+WHERE date(c.started_at) = date('now', '-1 day')
+GROUP BY COALESCE(c.model, '<default>')
+ORDER BY total_tokens DESC;

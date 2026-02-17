@@ -19,6 +19,8 @@ def translate_es_to_ru_refs_with_codex(
 ) -> dict[str, str]:
     """
     Spanish -> Spanish-with-inline-Russian-glosses (B2/C1/C2 only) via translation backend JSONL chunks.
+    Refs are cue-local: we intentionally disable neighbor context to avoid
+    bleed from previous/next subtitle lines.
     Returns id->annotated_text for all cues provided.
     """
     return translate_es_with_codex(
@@ -33,5 +35,6 @@ def translate_es_to_ru_refs_with_codex(
         max_workers=max_workers,
         prompt_mode="ru_refs_b2plus",
         context=context,
+        use_context=False,
         backend=backend,
     )
