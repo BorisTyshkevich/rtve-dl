@@ -55,33 +55,95 @@ pip install -e '.[asr-whisperx]'
 Download one episode:
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 --series-slug cuentame
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 -s cuentame
 ```
 
 Download whole season:
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 --series-slug cuentame
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 -s cuentame
 ```
 
 Debug + parallel (parallel is enabled by default):
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 --series-slug cuentame --debug --parallel
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 -s cuentame -d
 ```
 
-## Codex Chunk Concurrency
+### Using Environment Variables
 
-`--jobs-codex-chunks` controls how many Codex chunk requests run in parallel inside one translation task.
+Set series URL and slug once, then just specify the selector:
+
+```bash
+export RTVE_SERIES_URL="https://www.rtve.es/play/videos/cuentame-como-paso/"
+export RTVE_SERIES_SLUG="cuentame"
+
+rtve_dl T7S5        # Download episode
+rtve_dl T7          # Download season
+rtve_dl T8S1 -d     # Different season with debug
+```
+
+### Short Flags
+
+| Short | Long | Description |
+|-------|------|-------------|
+| `-s` | `--series-slug` | Series slug for output directories |
+| `-d` | `--debug` | Enable debug output |
+| `-j` | `--jobs-episodes` | Episode parallelism |
+| `-m` | `--model` | Translation model (auto-routes to backend) |
+
+The `download` subcommand is optional for backward compatibility:
+
+```bash
+# These are equivalent:
+rtve_dl download "https://..." T7S5 --series-slug cuentame
+rtve_dl "https://..." T7S5 -s cuentame
+```
+
+## Translation Backend
+
+Default backend is Claude (`--translation-backend claude`).
+
+### No-Chunk Mode (Default for Claude)
+
+Claude's large context window (200K tokens) allows translating entire episodes in a single request:
+
+```bash
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S1 -s cuentameT8
+```
+
+Benefits:
+- Better translation consistency (model sees full episode context)
+- Simpler caching (one file per track)
+- No chunk boundary artifacts
+
+### Chunked Mode (Default for Codex)
+
+For smaller context models, chunking splits cues into batches:
+
+```bash
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S1 \
+  -s cuentameT8 --translation-backend codex
+```
+
+Override defaults:
+- `--chunked` - Force chunked mode (even with Claude)
+- `--no-chunk` - Force single-request mode (even with Codex)
+- `--codex-chunk-cues N` - Set chunk size (default: 500)
+- `--jobs-codex-chunks N` - Parallel chunk workers (default: 4)
+
+### Chunk Concurrency
+
+When using chunked mode, `--jobs-codex-chunks` controls parallel chunk requests:
 
 - `1`: sequential chunks (more stable, lower chance of auth/rate-limit storms)
 - `2-4`: faster, but higher risk of chunk failures under account limits
 
-Example (stable mode):
+Example (stable chunked mode):
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S2 \
-  --series-slug cuentameT8 --jobs-codex-chunks 1
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S2 \
+  -s cuentameT8 --chunked --jobs-codex-chunks 1
 ```
 
 ## Subtitle Delay
@@ -91,22 +153,22 @@ Default subtitle delay is `800ms` and is applied at MKV mux stage only.
 Manual delay:
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 \
-  --series-slug cuentame --subtitle-delay-ms 1200
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 \
+  -s cuentame --subtitle-delay-ms 1200
 ```
 
 Auto delay:
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 \
-  --series-slug cuentame --subtitle-delay-mode auto
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 \
+  -s cuentame --subtitle-delay-mode auto
 ```
 
 Force recompute auto delay cache:
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 \
-  --series-slug cuentame --subtitle-delay-mode auto --subtitle-delay-auto-refresh
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 \
+  -s cuentame --subtitle-delay-mode auto --subtitle-delay-auto-refresh
 ```
 
 ## Reset Layers
@@ -128,36 +190,36 @@ Examples:
 Rebuild MKV only:
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S9 \
-  --series-slug cuentame --reset-layer mkv
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S9 \
+  -s cuentame --reset-layer mkv
 ```
 
 Rebuild refs subtitles and remux:
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S9 \
-  --series-slug cuentame --reset-layer subs-refs
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S9 \
+  -s cuentame --reset-layer subs-refs
 ```
 
 Re-download video and rebuild dependent layers:
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S9 \
-  --series-slug cuentame --reset-layer video
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S9 \
+  -s cuentame --reset-layer video
 ```
 
 Refresh catalog cache:
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 \
-  --series-slug cuentame --reset-layer catalog
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 \
+  -s cuentame --reset-layer catalog
 ```
 
 You can pass multiple layers:
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S9 \
-  --series-slug cuentame --reset-layer subs-ru,subs-refs
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S9 \
+  -s cuentame --reset-layer subs-ru,subs-refs
 ```
 
 If a season run with reset crashes, restart without `--reset-layer` to continue from already rebuilt cache.
@@ -168,8 +230,8 @@ Use `--force-asr` to generate ASR-based subtitles even when RTVE provides Spanis
 This creates a parallel set of translations from the ASR source, useful for comparing ASR vs RTVE quality.
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S1 \
-  --series-slug cuentameT8 --force-asr
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S1 \
+  -s cuentameT8 --force-asr
 ```
 
 In force-asr mode:
@@ -208,15 +270,15 @@ If you need a full re-ASR, delete `tmp/<slug>/srt/<base>.spa.asr_raw.srt` manual
 Use MLX backend explicitly:
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \
-  --series-slug cuentame --asr-backend mlx
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \
+  -s cuentame --asr-backend mlx
 ```
 
 Use WhisperX backend:
 
 ```bash
-rtve_dl download "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \
-  --series-slug cuentame --asr-backend whisperx
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \
+  -s cuentame --asr-backend whisperx
 ```
 
 ## Notes
