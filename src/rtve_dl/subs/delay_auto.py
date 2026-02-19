@@ -11,6 +11,7 @@ from pathlib import Path
 from difflib import SequenceMatcher
 
 from rtve_dl.log import debug, error
+from rtve_dl.constants import DEFAULT_SUBTITLE_DELAY_MS
 from rtve_dl.rtve.catalog import SeriesAsset
 from rtve_dl.subs.srt_parse import parse_srt
 from rtve_dl.subs.vtt import Cue
@@ -302,8 +303,8 @@ def estimate_series_delay_ms(
         local_candidates = local_candidates[: max(1, samples)]
 
     if not local_candidates:
-        error("subtitle auto-delay: no local mp4+spa.srt samples, fallback to 800ms")
-        return 800
+        error(f"subtitle auto-delay: no local mp4+spa.srt samples, fallback to {DEFAULT_SUBTITLE_DELAY_MS}ms")
+        return DEFAULT_SUBTITLE_DELAY_MS
 
     estimates: list[DelayEstimate] = []
     by_ep: dict[str, dict] = {}
@@ -342,8 +343,8 @@ def estimate_series_delay_ms(
             error(f"subtitle auto-delay sample failed for {base}: {e}")
 
     if not estimates:
-        error("subtitle auto-delay: all samples failed, fallback to 800ms")
-        return 800
+        error(f"subtitle auto-delay: all samples failed, fallback to {DEFAULT_SUBTITLE_DELAY_MS}ms")
+        return DEFAULT_SUBTITLE_DELAY_MS
 
     vals = [e.delay_ms for e in estimates]
     med = int(statistics.median(vals))

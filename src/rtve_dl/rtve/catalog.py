@@ -9,6 +9,7 @@ from pathlib import Path
 
 from rtve_dl.http import HttpClient
 from rtve_dl.log import debug
+from rtve_dl.rtve.constants import CATALOG_CACHE_TTL_S
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,6 @@ class SeriesAsset:
 
 _PROGRAM_ID_RE = re.compile(r"/api/programas/(\d+)/")
 _SEL_RE = re.compile(r"^T(?P<t>\d+)(?:S(?P<s>\d+))?$", re.IGNORECASE)
-_CATALOG_CACHE_TTL_S = 24 * 60 * 60
 
 
 def extract_program_id_from_html(series_html: str) -> str | None:
@@ -111,7 +111,7 @@ def list_assets_for_selector(
     season, episode = parse_selector(selector)
 
     cache_path: Path | None = _catalog_cache_path(series_url, cache_dir) if cache_dir is not None else None
-    cached: dict | None = _read_catalog_cache(cache_path, ttl_s=_CATALOG_CACHE_TTL_S) if cache_path else None
+    cached: dict | None = _read_catalog_cache(cache_path, ttl_s=CATALOG_CACHE_TTL_S) if cache_path else None
     if cached is not None:
         program_id = str(cached.get("program_id") or "")
         items = cached.get("items", [])

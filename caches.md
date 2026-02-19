@@ -80,7 +80,7 @@ For an episode base name `SxxExx_<title>` and `asset_id`:
 
 ## Slug Cache Objects
 
-- `tmp/<slug>/meta/catalog_<hash>.json`
+- `tmp/<slug>/meta/catalog_<hash>.json` (TTL: 7 days)
 - `tmp/<slug>/meta/subtitle_delay.auto.json`
 - `tmp/<slug>/meta/index_meta_ru.json`
 - `tmp/<slug>/meta/telemetry.sqlite`

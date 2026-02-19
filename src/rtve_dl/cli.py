@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 
+from rtve_dl.constants import DEFAULT_SUBTITLE_DELAY_MS
 from rtve_dl.workflows.download import download_selector
 from rtve_dl.log import set_debug
 
@@ -197,11 +198,11 @@ def main(argv: list[str] | None = None) -> int:
         "--subtitle-delay-ms",
         "--delay",
         type=int,
-        default=800,
+        default=DEFAULT_SUBTITLE_DELAY_MS,
         help=(
             "Subtitle offset in milliseconds applied at MKV mux stage only. "
             "Positive values delay subtitles; negative values make them appear earlier. "
-            "Default: 800"
+            f"Default: {DEFAULT_SUBTITLE_DELAY_MS}"
         ),
     )
     parser.add_argument(

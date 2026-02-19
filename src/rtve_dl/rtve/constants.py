@@ -1,0 +1,1 @@
+CATALOG_CACHE_TTL_S = 7 * 24 * 60 * 60

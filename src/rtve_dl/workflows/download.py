@@ -25,6 +25,7 @@ from rtve_dl.codex_batch import CodexExecutionContext
 from rtve_dl.asr_whisperx import transcribe_es_to_srt_with_whisperx
 from rtve_dl.asr_mlx import transcribe_es_to_srt_with_mlx_whisper
 from rtve_dl.index_html import build_slug_index
+from rtve_dl.constants import DEFAULT_SUBTITLE_DELAY_MS
 from rtve_dl.global_phrase_cache import GlobalPhraseCache, load_global_phrase_cache
 from rtve_dl.telemetry import TelemetryDB
 from rtve_dl.tmp_layout import TmpLayout, migrate_tmp_slug_layout
@@ -447,7 +448,8 @@ def download_selector(
     claude_model: str | None = None,
     codex_model: str | None = None,
     codex_chunk_cues: int = 500,
-    subtitle_delay_ms: int = 800,
+    no_chunk: bool | None = None,
+    subtitle_delay_ms: int = DEFAULT_SUBTITLE_DELAY_MS,
     subtitle_delay_mode: str = "manual",
     subtitle_delay_auto_scope: str = "series",
     subtitle_delay_auto_samples: int = 3,
@@ -662,6 +664,7 @@ def download_selector(
                                 chunk_size=es_clean_chunk_size,
                             ),
                             backend=translation_backend,
+                            no_chunk=no_chunk,
                         )
                     except Exception as e:
                         error(f"{a.asset_id}: ES cleanup failed, fallback to raw ES subtitles: {e}")
@@ -870,6 +873,7 @@ def download_selector(
                                     chunk_size=codex_chunk_cues,
                                 ),
                                 backend=translation_backend,
+                                no_chunk=no_chunk,
                             )
 
                         from rtve_dl.subs.vtt import Cue
@@ -919,6 +923,7 @@ def download_selector(
                                     chunk_size=codex_chunk_cues,
                                 ),
                                 backend=translation_backend,
+                                no_chunk=no_chunk,
                             )
 
                         from rtve_dl.subs.vtt import Cue
@@ -953,6 +958,7 @@ def download_selector(
                                     chunk_size=refs_chunk_size,
                                 ),
                                 backend=translation_backend,
+                                no_chunk=no_chunk,
                             )
 
                         from rtve_dl.subs.vtt import Cue
@@ -1042,6 +1048,7 @@ def download_selector(
                                         chunk_size=codex_chunk_cues,
                                     ),
                                     backend=translation_backend,
+                                    no_chunk=no_chunk,
                                 )
                             )
 
@@ -1079,6 +1086,7 @@ def download_selector(
                         ru_cached, ru_missing = global_cache.split_for_track(cues=cue_tasks, track="ru_full")
                         base_path = paths.layout.codex_base(base, "ru")
                         ru_map = dict(ru_cached)
+                        debug(f"ru_full: {len(cue_tasks)} total, {len(ru_cached)} cached, {len(ru_missing)} to translate")
                         if ru_missing:
                             ru_map.update(
                                 translate_es_to_ru_with_codex(
@@ -1097,6 +1105,7 @@ def download_selector(
                                         chunk_size=codex_chunk_cues,
                                     ),
                                     backend=translation_backend,
+                                    no_chunk=no_chunk,
                                 )
                             )
 
@@ -1114,6 +1123,7 @@ def download_selector(
                         refs_cached, refs_missing = global_cache.split_for_track(cues=cue_tasks, track="ru_refs")
                         refs_base_path = paths.layout.codex_base(base, "ru_ref")
                         refs_map = dict(refs_cached)
+                        debug(f"ru_refs: {len(cue_tasks)} total, {len(refs_cached)} cached, {len(refs_missing)} to translate")
                         if refs_missing:
                             refs_chunk_size = min(400, codex_chunk_cues)
                             refs_workers = max(1, min(2, jobs_codex_chunks))
@@ -1134,6 +1144,7 @@ def download_selector(
                                         chunk_size=refs_chunk_size,
                                     ),
                                     backend=translation_backend,
+                                    no_chunk=no_chunk,
                                 )
                             )
 

@@ -13,9 +13,10 @@ Input format (TSV per line):
 - col2: current subtitle text
 - col3: previous cue text (context)
 - col4: next cue text (context)
+- col5: echo (must be copied verbatim to output)
 
 Output format:
-- TSV lines only: id<TAB>cleaned_text
+- TSV lines only: id<TAB>cleaned_text<TAB>echo
 - No prose, no markdown, no code fences.
 
 {{PAYLOAD}}

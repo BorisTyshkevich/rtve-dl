@@ -148,7 +148,7 @@ rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S2 \
 
 ## Subtitle Delay
 
-Default subtitle delay is `800ms` and is applied at MKV mux stage only.
+Default subtitle delay is `450ms` and is applied at MKV mux stage only.
 
 Manual delay:
 
@@ -184,6 +184,8 @@ Allowed values:
 - `video`
 - `mkv`
 - `catalog`
+
+Catalog cache TTL is 7 days by default (stored in `tmp/<slug>/meta/catalog_<hash>.json`).
 
 Examples:
 

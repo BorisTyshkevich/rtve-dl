@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 import subprocess
@@ -12,15 +14,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rtve_dl.log import debug, stage
+from rtve_dl.global_phrase_cache import normalize_es_text
 
 if TYPE_CHECKING:
     from rtve_dl.telemetry import TelemetryDB
-
-
-_CLAUDE_MODEL_ALIASES = {
-    "sonnet": "claude-sonnet-4-20250514",
-    "opus": "claude-opus-4-5-20251101",
-}
 
 
 @dataclass(frozen=True)
@@ -41,6 +38,8 @@ class CodexExecutionContext:
 
 
 _JSON_LINE_RE = re.compile(r"^\s*\{.*\}\s*$")
+_LEADING_PUNCT_RE = re.compile(r"^[\s\-\u2013\u2014\.\,\!\?\:;\"'“”‘’\(\)\[\]\{\}]+")
+_NOCHUNK_CACHE_FORMAT = 2
 _PROMPT_FILES = {
     "translate_ru": "ru_full.md",
     "translate_en": "en_mt.md",
@@ -65,15 +64,20 @@ def _ensure_claude_on_path() -> None:
 
 
 def _resolve_claude_model(model: str | None) -> str:
-    if model is None:
-        return _CLAUDE_MODEL_ALIASES["sonnet"]
-    return _CLAUDE_MODEL_ALIASES.get(model, model)
+    """Pass through model name to Claude CLI (accepts aliases like 'sonnet', 'opus')."""
+    return model or "sonnet"
 
 
 def _load_prompt_template(prompt_mode: str) -> str:
     file_name = _PROMPT_FILES.get(prompt_mode)
     if not file_name:
         raise RuntimeError(f"unknown prompt mode: {prompt_mode}")
+    # Read directly from source tree (next to this file)
+    prompt_dir = Path(__file__).parent / "prompts"
+    prompt_path = prompt_dir / file_name
+    if prompt_path.exists():
+        return prompt_path.read_text(encoding="utf-8")
+    # Fallback to installed package resources
     return resources.files("rtve_dl.prompts").joinpath(file_name).read_text(encoding="utf-8")
 
 
@@ -119,6 +123,30 @@ def _tsv_unescape(value: str) -> str:
     return "".join(out)
 
 
+def _strip_leading_punct(text: str) -> str:
+    return _LEADING_PUNCT_RE.sub("", text or "")
+
+
+def _make_echo(text: str) -> str:
+    norm = normalize_es_text(text)
+    norm = _strip_leading_punct(norm)
+    return norm[:16].strip()
+
+
+def _model_id(cue_id: str, text: str) -> str:
+    raw = f"{cue_id}|{text}".encode("utf-8", errors="replace")
+    digest = hashlib.sha256(raw).digest()
+    return base64.b32encode(digest).decode("ascii").rstrip("=").lower()[:8]
+
+
+def _build_expected_map(cues: list[tuple[str, str]]) -> dict[str, tuple[str, str]]:
+    expected: dict[str, tuple[str, str]] = {}
+    for cue_id, text in cues:
+        mid = _model_id(cue_id, text)
+        expected[mid] = (cue_id, _make_echo(text))
+    return expected
+
+
 def _parse_tsv_map(path: Path, *, allow_id_only: bool = False) -> dict[str, str]:
     out: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -152,6 +180,32 @@ def _parse_codex_tsv_output(path: Path, *, target_language: str) -> dict[str, st
     return out
 
 
+def _parse_tsv_with_echo(
+    path: Path,
+    *,
+    expected: dict[str, tuple[str, str]],
+) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        row = line.rstrip("\r")
+        if not row.strip():
+            continue
+        parts = row.split("\t")
+        if len(parts) < 3:
+            continue
+        model_id = _tsv_unescape(parts[0]).strip()
+        echo = _tsv_unescape(parts[-1]).strip()
+        text = _tsv_unescape(parts[1]).strip()
+        expected_row = expected.get(model_id)
+        if not expected_row:
+            continue
+        _cue_id, expected_echo = expected_row
+        if echo != expected_echo:
+            continue
+        out[model_id] = text
+    return out
+
+
 def _parse_jsonl_map(path: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -172,6 +226,28 @@ def _write_jsonl_map(path: Path, mapping: dict[str, str]) -> None:
     with path.open("w", encoding="utf-8") as f:
         for cue_id, text in mapping.items():
             f.write(json.dumps({"id": cue_id, "text": text}, ensure_ascii=False) + "\n")
+
+
+def _write_nochunk_cache(path: Path, mapping: dict[str, str]) -> None:
+    with path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps({"_meta": {"format": _NOCHUNK_CACHE_FORMAT}}) + "\n")
+        for cue_id, text in mapping.items():
+            f.write(json.dumps({"id": cue_id, "text": text}, ensure_ascii=False) + "\n")
+
+
+def _is_nochunk_cache_compatible(path: Path) -> bool:
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            obj = json.loads(line)
+            meta = obj.get("_meta") if isinstance(obj, dict) else None
+            if isinstance(meta, dict):
+                return int(meta.get("format", 0) or 0) == _NOCHUNK_CACHE_FORMAT
+            return False
+    except Exception:
+        return False
+    return False
 
 
 def _telemetry_record(
@@ -258,6 +334,8 @@ def chunk_cues(
         in_path.parent.mkdir(parents=True, exist_ok=True)
         with in_path.open("w", encoding="utf-8") as f_jsonl, in_tsv.open("w", encoding="utf-8") as f_tsv:
             for j, (cue_id, text) in enumerate(part):
+                model_id = _model_id(cue_id, text)
+                echo = _make_echo(text)
                 f_jsonl.write(json.dumps({"id": cue_id, "text": text}, ensure_ascii=False) + "\n")
                 if use_context:
                     global_idx = i + j
@@ -266,17 +344,18 @@ def chunk_cues(
                     f_tsv.write(
                         "\t".join(
                             [
-                                _tsv_escape(cue_id),
+                                _tsv_escape(model_id),
                                 _tsv_escape(text),
                                 _tsv_escape(left),
                                 _tsv_escape(right),
+                                _tsv_escape(echo),
                             ]
                         )
                         + "\n"
                     )
                 else:
                     f_tsv.write(
-                        "\t".join([_tsv_escape(cue_id), _tsv_escape(text)]) + "\n"
+                        "\t".join([_tsv_escape(model_id), _tsv_escape(text), _tsv_escape(echo)]) + "\n"
                     )
     return out
 
@@ -297,7 +376,8 @@ def run_codex_chunk(
     if backend == "claude":
         _ensure_claude_on_path()
         resolved_model = _resolve_claude_model(model)
-        cmd = ["claude", "-p", "--print", "--model", resolved_model]
+        # --setting-sources user: skip project context (CLAUDE.md) to avoid Claude acting as code assistant
+        cmd = ["claude", "-p", "--print", "--model", resolved_model, "--setting-sources", "user"]
         debug("claude: " + " ".join(cmd))
     else:
         _ensure_codex_on_path()
@@ -373,9 +453,18 @@ def run_codex_chunk(
                 raise RuntimeError(f"{backend} rate limited; see {log_path}")
             raise RuntimeError(f"{backend} failed (exit {res.returncode}); see {log_path}")
 
-        parsed = _parse_codex_tsv_output(chunk.out_tsv, target_language=target_language)
-        if not parsed:
-            parsed = _parse_jsonl_map(chunk.out_tsv)
+        expected = _build_expected_map(
+            [
+                (str(obj.get("id", "")), obj.get("text", ""))
+                for obj in (
+                    json.loads(line)
+                    for line in chunk.in_jsonl.read_text(encoding="utf-8", errors="replace").splitlines()
+                    if line.strip()
+                )
+                if isinstance(obj, dict) and isinstance(obj.get("text"), str)
+            ]
+        )
+        parsed = _parse_tsv_with_echo(chunk.out_tsv, expected=expected)
         if not parsed:
             log_path = Path(str(chunk.out_jsonl) + ".log")
             raw_out = chunk.out_tsv.read_text(encoding="utf-8", errors="replace")
@@ -399,7 +488,14 @@ def run_codex_chunk(
                 usage_parse_ok=usage_parse_ok,
             )
             raise RuntimeError(f"{backend} empty/unparseable output; see {log_path}")
-        _write_jsonl_map(chunk.out_jsonl, parsed)
+        remapped: dict[str, str] = {}
+        for model_id, text in parsed.items():
+            expected_row = expected.get(model_id)
+            if not expected_row:
+                continue
+            cue_id, _echo = expected_row
+            remapped[cue_id] = text
+        _write_jsonl_map(chunk.out_jsonl, remapped)
         _telemetry_record(
             context=context,
             chunk=chunk,
@@ -502,7 +598,7 @@ def _run_codex_chunks(
         raise failed[0][1]
 
 
-def translate_es_with_codex(
+def _translate_es_chunked(
     *,
     cues: list[tuple[str, str]],
     base_path: Path,
@@ -518,6 +614,7 @@ def translate_es_with_codex(
     use_context: bool = True,
     backend: str = "claude",
 ) -> dict[str, str]:
+    """Chunked translation mode: split cues into batches and process in parallel."""
     chunks = chunk_cues(cues, chunk_cues=chunk_size_cues, base_path=base_path, io_tag=io_tag, use_context=use_context)
 
     pending: list[CodexChunkPaths] = []
@@ -581,3 +678,368 @@ def translate_es_with_codex(
     if missing:
         raise RuntimeError(f"{backend} output missing {len(missing)} ids after retries (example: {missing[:5]})")
     return merged
+
+
+def _translate_no_chunk(
+    *,
+    cues: list[tuple[str, str]],
+    base_path: Path,
+    model: str | None,
+    target_language: str,
+    io_tag: str,
+    prompt_mode: str,
+    context: CodexExecutionContext | None = None,
+    backend: str = "claude",
+    use_context: bool = True,
+) -> dict[str, str]:
+    """No-chunk translation mode: send all cues in a single request."""
+    # Cache file for resume
+    cache_file = Path(str(base_path) + f".{io_tag}.nochunk.out.jsonl")
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Check for cached result (full or partial)
+    want = {i for i, _ in cues}
+    parsed: dict[str, str] = {}
+    skip_main_request = False
+
+    if cache_file.exists() and cache_file.stat().st_size > 0:
+        if not _is_nochunk_cache_compatible(cache_file):
+            debug(f"{backend}:{target_language.lower()}:nochunk cache format mismatch, ignoring: {cache_file}")
+        else:
+            cached = _parse_jsonl_map(cache_file)
+            cached_ids = set(cached.keys())
+            if want <= cached_ids:
+                # Full cache hit
+                debug(f"{backend}:{target_language.lower()}:nochunk cache hit: {cache_file}")
+                return {k: v for k, v in cached.items() if k in want}
+            elif cached_ids & want:
+                # Partial cache hit - skip main request, go straight to retry
+                parsed = {k: v for k, v in cached.items() if k in want}
+                have_count = len(parsed)
+                want_count = len(want)
+                debug(f"{backend}:{target_language.lower()}:nochunk partial cache ({have_count}/{want_count}), skipping main request")
+                skip_main_request = True
+
+    if not skip_main_request:
+        # Build TSV payload (include context columns when requested)
+        tsv_lines = []
+        for idx, (cue_id, text) in enumerate(cues):
+            model_id = _model_id(cue_id, text)
+            echo = _make_echo(text)
+            if use_context:
+                prev_text = cues[idx - 1][1] if idx > 0 else ""
+                next_text = cues[idx + 1][1] if idx < len(cues) - 1 else ""
+                tsv_lines.append(
+                    "\t".join(
+                        [
+                            _tsv_escape(model_id),
+                            _tsv_escape(text),
+                            _tsv_escape(prev_text),
+                            _tsv_escape(next_text),
+                            _tsv_escape(echo),
+                        ]
+                    )
+                )
+            else:
+                tsv_lines.append(
+                    "\t".join([_tsv_escape(model_id), _tsv_escape(text), _tsv_escape(echo)])
+                )
+        tsv_payload = "\n".join(tsv_lines)
+
+        prompt = _build_prompt(tsv_payload=tsv_payload, prompt_mode=prompt_mode)
+
+        # Output file for raw TSV response
+        out_tsv = Path(str(base_path) + f".{io_tag}.nochunk.out.tsv")
+
+        if backend == "claude":
+            _ensure_claude_on_path()
+            resolved_model = _resolve_claude_model(model)
+            # --setting-sources user: skip project context (CLAUDE.md) to avoid Claude acting as code assistant
+            cmd = ["claude", "-p", "--print", "--model", resolved_model, "--setting-sources", "user"]
+            debug("claude (no-chunk): " + " ".join(cmd))
+        else:
+            _ensure_codex_on_path()
+            cmd = ["codex", "exec", "-s", "read-only", "--output-last-message", str(out_tsv)]
+            if model:
+                cmd += ["-m", model]
+            cmd.append("-")
+            debug("codex exec (no-chunk): " + " ".join(cmd))
+
+        with stage(f"{backend}:{target_language.lower()}:nochunk:{len(cues)} cues"):
+            started_at = _now_iso()
+            t0 = time.time()
+            res = subprocess.run(cmd, input=prompt, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+            # For Claude backend, write stdout to out_tsv
+            if backend == "claude" and res.returncode == 0:
+                out_tsv.write_text(res.stdout or "", encoding="utf-8")
+
+            total_tokens = _parse_total_tokens(res.stdout or "")
+
+            if res.returncode != 0:
+                log_path = Path(str(cache_file) + ".log")
+                log_path.write_text(res.stdout or "", encoding="utf-8", errors="replace")
+                out = (res.stdout or "").lower()
+                if backend == "claude":
+                    if (
+                        "api key" in out
+                        or "unauthorized" in out
+                        or "authentication" in out
+                        or "invalid_api_key" in out
+                    ):
+                        raise RuntimeError(
+                            f"claude failed due to auth error. Check ANTHROPIC_API_KEY. Details: {log_path}"
+                        )
+                else:
+                    if (
+                        "401 unauthorized" in out
+                        or "provided authentication token is expired" in out
+                        or "refresh_token_reused" in out
+                    ):
+                        raise RuntimeError(
+                            "codex exec failed due to expired/invalid auth. "
+                            "Run `codex logout` then `codex login --device-auth` and retry. "
+                            f"Details: {log_path}"
+                        )
+                if "429" in out or "rate limit" in out or "too many requests" in out:
+                    raise RuntimeError(f"{backend} rate limited; see {log_path}")
+                raise RuntimeError(f"{backend} failed (exit {res.returncode}); see {log_path}")
+
+            expected = _build_expected_map(cues)
+            parsed = _parse_tsv_with_echo(out_tsv, expected=expected)
+            if not parsed:
+                log_path = Path(str(cache_file) + ".log")
+                raw_out = out_tsv.read_text(encoding="utf-8", errors="replace")
+                log_path.write_text(
+                    f"{backend} returned empty/unparseable output\n\n----raw output----\n" + raw_out,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                raise RuntimeError(f"{backend} empty/unparseable output; see {log_path}")
+
+            # Record telemetry
+            if context is not None and context.telemetry is not None and context.run_id and context.episode_id:
+                context.telemetry.record_codex_chunk(
+                    run_id=context.run_id,
+                    episode_id=context.episode_id,
+                    track_type=context.track_type,
+                    chunk_name=cache_file.name,
+                    model=model,
+                    chunk_size=len(cues),
+                    input_items=len(cues),
+                    started_at=started_at,
+                    ended_at=_now_iso(),
+                    duration_ms=int((time.time() - t0) * 1000),
+                    ok=True,
+                    exit_code=0,
+                    missing_ids=0,
+                    fallback_used=False,
+                    log_path=None,
+                    total_tokens=total_tokens,
+                    usage_source="stdout_tokens_used" if total_tokens else "missing",
+                    usage_parse_ok=total_tokens is not None,
+                )
+
+            # Write cache for resume (remap model_id -> numeric id)
+            remapped: dict[str, str] = {}
+            for model_id, text in parsed.items():
+                expected_row = expected.get(model_id)
+                if not expected_row:
+                    continue
+                cue_id, _echo = expected_row
+                remapped[cue_id] = text
+            _write_nochunk_cache(cache_file, remapped)
+
+    # Validate output and retry missing IDs with chunked mode
+    if not skip_main_request:
+        parsed = remapped
+    missing = sorted(list(want - set(parsed.keys())), key=lambda x: int(x) if x.isdigit() else 0)
+
+    if missing:
+        debug(f"{backend}:{target_language.lower()}:nochunk missing {len(missing)} ids, retrying with chunked mode")
+
+        # Build context-aware cues for missing IDs
+        cue_map = {cid: text for cid, text in cues}
+        cue_ids = [cid for cid, _ in cues]
+        id_to_idx = {cid: idx for idx, cid in enumerate(cue_ids)}
+
+        # Retry using chunked mode with context
+        retry_base = Path(str(base_path) + ".nochunk_retry")
+        retry_ctx = None
+        if context is not None:
+            retry_ctx = CodexExecutionContext(
+                telemetry=context.telemetry,
+                run_id=context.run_id,
+                episode_id=context.episode_id,
+                track_type=context.track_type + "_retry",
+                chunk_size=min(50, len(missing)),
+            )
+
+        # Use small chunk sizes for retry
+        for retry_sz in [min(50, len(missing)), 10, 1]:
+            if not missing:
+                break
+            retry_cues = [(mid, cue_map[mid]) for mid in missing]
+            retry_chunks = chunk_cues(
+                retry_cues,
+                chunk_cues=retry_sz,
+                base_path=retry_base,
+                io_tag=io_tag + "_retry",
+                use_context=use_context,
+            )
+            if use_context:
+                # Build context for retry chunks from original cue list
+                for ch in retry_chunks:
+                    # Rewrite TSV with proper context from full cue list
+                    with ch.in_tsv.open("w", encoding="utf-8") as f_tsv:
+                        for line in ch.in_jsonl.read_text(encoding="utf-8").splitlines():
+                            if not line.strip():
+                                continue
+                            try:
+                                obj = json.loads(line)
+                                cue_id = str(obj.get("id", ""))
+                                text = obj.get("text", "")
+                                idx = id_to_idx.get(cue_id)
+                                if idx is not None:
+                                    prev_text = cue_map.get(cue_ids[idx - 1], "") if idx > 0 else ""
+                                    next_text = cue_map.get(cue_ids[idx + 1], "") if idx < len(cue_ids) - 1 else ""
+                                else:
+                                    prev_text = ""
+                                    next_text = ""
+                                model_id = _model_id(cue_id, text)
+                                echo = _make_echo(text)
+                                f_tsv.write(
+                                    "\t".join(
+                                        [
+                                            _tsv_escape(model_id),
+                                            _tsv_escape(text),
+                                            _tsv_escape(prev_text),
+                                            _tsv_escape(next_text),
+                                            _tsv_escape(echo),
+                                        ]
+                                    )
+                                    + "\n"
+                                )
+                            except Exception:
+                                continue
+
+            _run_codex_chunks(
+                chunks=retry_chunks,
+                model=model,
+                fallback_model=None,
+                target_language=target_language,
+                max_workers=1,
+                prompt_mode=prompt_mode,
+                context=retry_ctx,
+                backend=backend,
+            )
+            for ch in retry_chunks:
+                if ch.out_jsonl.exists():
+                    parsed.update(_parse_jsonl_map(ch.out_jsonl))
+            missing = sorted(list(want - set(parsed.keys())), key=lambda x: int(x) if x.isdigit() else 0)
+
+        # Update cache with retry results
+        _write_nochunk_cache(cache_file, parsed)
+
+        if missing:
+            raise RuntimeError(
+                f"{backend} no-chunk output still missing {len(missing)} ids after retry (example: {missing[:5]})"
+            )
+
+    return parsed
+
+
+def translate_es(
+    *,
+    cues: list[tuple[str, str]],
+    base_path: Path,
+    chunk_size_cues: int,
+    model: str | None,
+    fallback_model: str | None,
+    resume: bool,
+    target_language: str,
+    io_tag: str,
+    max_workers: int,
+    prompt_mode: str = "translate_ru",
+    context: CodexExecutionContext | None = None,
+    use_context: bool = True,
+    backend: str = "claude",
+    no_chunk: bool | None = None,
+) -> dict[str, str]:
+    """
+    Unified translation entry point.
+
+    Dispatches to no-chunk or chunked mode based on backend and flags:
+    - no_chunk=True: Single request with full context (default for Claude)
+    - no_chunk=False: Chunked parallel batches (default for Codex)
+    - no_chunk=None: Auto-select based on backend
+    """
+    # Default: no_chunk=True for claude, False for codex
+    if no_chunk is None:
+        no_chunk = (backend == "claude")
+
+    if no_chunk:
+        return _translate_no_chunk(
+            cues=cues,
+            base_path=base_path,
+            model=model,
+            target_language=target_language,
+            io_tag=io_tag,
+            prompt_mode=prompt_mode,
+            context=context,
+            backend=backend,
+            use_context=use_context or (prompt_mode == "es_clean_light"),
+        )
+    else:
+        return _translate_es_chunked(
+            cues=cues,
+            base_path=base_path,
+            chunk_size_cues=chunk_size_cues,
+            model=model,
+            fallback_model=fallback_model,
+            resume=resume,
+            target_language=target_language,
+            io_tag=io_tag,
+            max_workers=max_workers,
+            prompt_mode=prompt_mode,
+            context=context,
+            use_context=use_context,
+            backend=backend,
+        )
+
+
+# Backwards compatibility alias
+def translate_es_with_codex(
+    *,
+    cues: list[tuple[str, str]],
+    base_path: Path,
+    chunk_size_cues: int,
+    model: str | None,
+    fallback_model: str | None,
+    resume: bool,
+    target_language: str,
+    io_tag: str,
+    max_workers: int,
+    prompt_mode: str = "translate_ru",
+    context: CodexExecutionContext | None = None,
+    use_context: bool = True,
+    backend: str = "claude",
+    no_chunk: bool | None = None,
+) -> dict[str, str]:
+    """Legacy alias for translate_es()."""
+    return translate_es(
+        cues=cues,
+        base_path=base_path,
+        chunk_size_cues=chunk_size_cues,
+        model=model,
+        fallback_model=fallback_model,
+        resume=resume,
+        target_language=target_language,
+        io_tag=io_tag,
+        max_workers=max_workers,
+        prompt_mode=prompt_mode,
+        context=context,
+        use_context=use_context,
+        backend=backend,
+        no_chunk=no_chunk,
+    )
