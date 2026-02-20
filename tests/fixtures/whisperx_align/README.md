@@ -1,6 +1,6 @@
 This fixture holds a short Spanish audio clip and matching SRT snippet for WhisperX alignment.
 
-Expected files (stored via Git LFS):
+Expected files (not stored in git to avoid copyrighted media):
 - `sample_audio.wav` (mono 16kHz, ~3–6 minutes)
 - `sample_es.srt` (matching subtitle snippet; timestamps start near 00:00:00)
 
