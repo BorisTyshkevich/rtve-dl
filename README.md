@@ -291,7 +291,7 @@ If ES cleanup fails, pipeline falls back to raw ES subtitles and continues.
 `--reset-layer subs-es` removes cleaned ES (`*.spa.srt`) and raw ASR cache (`*.spa.asr_raw.srt`).
 Rebuilding ES after reset will re-run ASR if RTVE subtitles are missing.
 
-Default ASR backend is WhisperX (CPU, model `small`, compute type `int8`). Use MLX backend explicitly:
+Default ASR backend is WhisperX (CPU, model `small`, compute type `int8`). Note: auto-delay forces `int8` regardless of `--asr-compute-type`. Use MLX backend explicitly:
 
 ```bash
 rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \

@@ -35,7 +35,8 @@ of the episode run, we compute a delay:
 2. If energy confidence is low, run ASR on a 5-minute clip from the middle
    of the episode:
    - Extract WAV clip with ffmpeg.
-   - Transcribe clip with MLX or WhisperX (WhisperX auto-delay forces `compute_type=int8`).
+   - Transcribe clip with MLX or WhisperX. WhisperX auto-delay always forces `compute_type=int8`,
+     regardless of `--asr-compute-type` (CLI still applies to other ASR uses).
    - Match ASR cues to ES cues inside the clip window.
    - Compute median delta as delay (ms).
 
