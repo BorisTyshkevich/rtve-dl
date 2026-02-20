@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.0
+
+- Subtitle timing overhaul:
+  - default delay mode is `auto`, applied by shifting SRT files (mux delay = 0).
+  - auto-delay is computed per episode only when ES subtitles are rebuilt.
+  - EN VTT cues are shifted by the same delay; MT tracks inherit ES timing.
+- Added WhisperX alignment mode:
+  - optional per-cue retiming to audio (`--subtitle-align whisperx`).
+  - alignment helper module + smoke test fixtures/tools.
+  - alignment documentation and Apple Silicon MPS setup guide.
+- Simplified delay controls and reset behavior:
+  - single `--subtitle-delay auto|<ms>` flag (old modes removed).
+  - ES reset clears aligned SRTs and auto-delay artifacts.
+- Translation pipeline improvements:
+  - no-chunk retry path uses chunked fallback with consistent chunk sizing.
+  - retry TSV generation respects `use_context` and prompt expectations.
+  - large cue sets auto-disable no-chunk to avoid missing ID drift.
+- Performance/maintainability:
+  - precomputed ID->index maps to avoid O(n^2) retries.
+  - resolve calls skipped when ES SRT + MP4 already exist locally.
+  - new subtitle timing documentation and tests.
+
 ## 0.2.6
 
 - Reworked RU refs generation/output to inline annotation mode:

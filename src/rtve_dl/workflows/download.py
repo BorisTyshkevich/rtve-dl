@@ -514,7 +514,7 @@ def download_selector(
             "codex_chunk_cues": codex_chunk_cues,
             "jobs_codex_chunks": jobs_codex_chunks,
         },
-        app_version="0.2.x",
+        app_version="0.3.0",
     )
     user_reset_layers = _normalize_reset_layers(reset_layers)
     active_reset_layers = _expand_reset_layers(user_reset_layers)

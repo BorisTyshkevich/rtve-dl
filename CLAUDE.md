@@ -207,7 +207,7 @@ SELECT model, COUNT(*) FROM codex_chunks WHERE fallback_used = 1 GROUP BY model;
 
 ## Version
 
-Current: **0.2.6** (see CHANGELOG.md for history)
+Current: **0.3.0** (see CHANGELOG.md for history)
 
 ## Documentation
 
