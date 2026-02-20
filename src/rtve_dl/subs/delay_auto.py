@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import json
 import math
 import re
 import statistics
 import subprocess
-import time
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from difflib import SequenceMatcher
 
 from rtve_dl.log import debug, error
+from rtve_dl.ffmpeg import probe_duration_seconds, run_ffmpeg
 from rtve_dl.constants import DEFAULT_SUBTITLE_DELAY_MS
 from rtve_dl.rtve.catalog import SeriesAsset
 from rtve_dl.subs.srt_parse import parse_srt
@@ -20,6 +20,11 @@ from rtve_dl.asr_whisperx import transcribe_es_to_srt_with_whisperx
 
 
 _NORM_RE = re.compile(r"[^a-z0-9а-яёñáéíóúü]+", re.IGNORECASE)
+AUTO_DELAY_ASR_SEGMENT_S = 300
+ASR_MATCH_SIM_MIN = 0.66
+ASR_MIN_MATCHES = 12
+ENERGY_PCTL = 0.55
+ENERGY_FLOOR = 400
 
 
 @dataclass(frozen=True)
@@ -101,6 +106,7 @@ def _shift_intervals(intervals: list[tuple[int, int]], shift_bins: int, n_bins: 
 
 def _audio_activity_intervals(mp4_path: Path, *, bin_ms: int) -> list[tuple[int, int]]:
     rate = 1000 // bin_ms
+    debug(f"subtitle auto-delay: ffmpeg extract audio {mp4_path} (bin_ms={bin_ms})")
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -129,9 +135,9 @@ def _audio_activity_intervals(mp4_path: Path, *, bin_ms: int) -> list[tuple[int,
     if not vals:
         return []
     sorted_vals = sorted(vals)
-    # 65 percentile + floor threshold
-    idx = int(0.65 * (len(sorted_vals) - 1))
-    thr = max(350, sorted_vals[idx])
+    # percentile + floor threshold
+    idx = int(ENERGY_PCTL * (len(sorted_vals) - 1))
+    thr = max(ENERGY_FLOOR, sorted_vals[idx])
     act = [1 if v >= thr else 0 for v in vals]
     intervals: list[tuple[int, int]] = []
     i = 0
@@ -194,25 +200,105 @@ def _estimate_by_asr(
     asr_mlx_model: str,
     max_ms: int,
 ) -> DelayEstimate | None:
-    asr_srt = tmp_dir / f"{base}.auto_delay.asr.srt"
-    if not asr_srt.exists() or asr_srt.stat().st_size == 0:
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w+b",
+        prefix=f"auto_delay.{base}.",
+        suffix=".srt",
+        dir=tmp_dir,
+        delete=False,
+    ) as tmp:
+        asr_srt = Path(tmp.name)
+    clip_path: Path | None = None
+    clip_source = mp4_path
+    clip_start_ms = 0
+    clip_end_ms = 0
+    duration_s = probe_duration_seconds(mp4_path)
+    if duration_s and duration_s > AUTO_DELAY_ASR_SEGMENT_S:
+        start_s = max(0.0, (duration_s / 2.0) - (AUTO_DELAY_ASR_SEGMENT_S / 2.0))
+        clip_start_ms = int(start_s * 1000)
+        clip_end_ms = int((start_s + AUTO_DELAY_ASR_SEGMENT_S) * 1000)
+        with tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix=f"auto_delay.{base}.",
+            suffix=".wav",
+            dir=tmp_dir,
+            delete=False,
+        ) as tmp_clip:
+            clip_path = Path(tmp_clip.name)
+        try:
+            run_ffmpeg(
+                [
+                    "-y",
+                    "-ss",
+                    f"{start_s:.3f}",
+                    "-t",
+                    f"{AUTO_DELAY_ASR_SEGMENT_S:.3f}",
+                    "-i",
+                    str(mp4_path),
+                    "-vn",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "16000",
+                    "-f",
+                    "wav",
+                    str(clip_path),
+                ]
+            )
+            debug(
+                "subtitle auto-delay ASR clip: "
+                f"start={start_s:.1f}s dur={AUTO_DELAY_ASR_SEGMENT_S}s"
+            )
+            clip_source = clip_path
+        except Exception:
+            try:
+                clip_path.unlink()
+            except OSError:
+                pass
+            clip_path = None
+    try:
         if asr_backend == "mlx":
-            transcribe_es_to_srt_with_mlx_whisper(media_path=mp4_path, out_srt=asr_srt, model_repo=asr_mlx_model)
+            transcribe_es_to_srt_with_mlx_whisper(
+                media_path=clip_source, out_srt=asr_srt, model_repo=asr_mlx_model
+            )
         else:
             transcribe_es_to_srt_with_whisperx(
-                media_path=mp4_path,
+                media_path=clip_source,
                 out_srt=asr_srt,
                 model=asr_model,
                 device=asr_device,
-                compute_type=asr_compute_type,
+                compute_type="int8",
                 batch_size=asr_batch_size,
                 vad_method=asr_vad_method,
             )
-    asr_cues = parse_srt(asr_srt.read_text(encoding="utf-8", errors="replace"))
+        asr_cues = parse_srt(asr_srt.read_text(encoding="utf-8", errors="replace"))
+    finally:
+        try:
+            asr_srt.unlink()
+        except OSError:
+            pass
+        if clip_path is not None:
+            try:
+                clip_path.unlink()
+            except OSError:
+                pass
     if not asr_cues:
         return None
-    sub_t = [(_norm_text(c.text), c.start_ms) for c in cues if _norm_text(c.text)]
-    asr_t = [(_norm_text(c.text), c.start_ms) for c in asr_cues if _norm_text(c.text)]
+    if clip_start_ms and clip_end_ms:
+        sub_t = [
+            (_norm_text(c.text), c.start_ms)
+            for c in cues
+            if _norm_text(c.text) and clip_start_ms <= c.start_ms <= clip_end_ms
+        ]
+        asr_t = [
+            (_norm_text(c.text), c.start_ms + clip_start_ms)
+            for c in asr_cues
+            if _norm_text(c.text)
+        ]
+    else:
+        sub_t = [(_norm_text(c.text), c.start_ms) for c in cues if _norm_text(c.text)]
+        asr_t = [(_norm_text(c.text), c.start_ms) for c in asr_cues if _norm_text(c.text)]
     if not sub_t or not asr_t:
         return None
 
@@ -229,34 +315,18 @@ def _estimate_by_asr(
             if sim > best_sim:
                 best_sim = sim
                 best_j = k
-        if best_j >= 0 and best_sim >= 0.58:
-            delta = s_ms - asr_t[best_j][1]
+        if best_j >= 0 and best_sim >= ASR_MATCH_SIM_MIN:
+            # Positive delay means subtitles should move later.
+            delta = asr_t[best_j][1] - s_ms
             if abs(delta) <= max_ms:
                 deltas.append(delta)
                 sims.append(best_sim)
                 j = best_j
-    if len(deltas) < 8:
+    if len(deltas) < ASR_MIN_MATCHES:
         return None
     delay_ms = int(statistics.median(deltas))
     confidence = min(1.0, len(deltas) / 40.0) * (sum(sims) / len(sims))
     return DelayEstimate(delay_ms=delay_ms, confidence=confidence, method="asr", matched=len(deltas))
-
-
-def _load_cache(path: Path) -> dict | None:
-    if not path.exists():
-        return None
-    try:
-        obj = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    if not isinstance(obj, dict):
-        return None
-    return obj
-
-
-def _save_cache(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def estimate_series_delay_ms(
@@ -269,7 +339,6 @@ def estimate_series_delay_ms(
     scope: str,
     samples: int,
     max_ms: int,
-    refresh: bool,
     asr_backend: str,
     asr_model: str,
     asr_device: str,
@@ -278,13 +347,6 @@ def estimate_series_delay_ms(
     asr_vad_method: str,
     asr_mlx_model: str,
 ) -> int:
-    cache_path = cache_dir / "subtitle_delay.auto.json"
-    if not refresh:
-        cached = _load_cache(cache_path)
-        if cached and isinstance(cached.get("delay_ms"), int):
-            debug(f"subtitle auto-delay cache hit: {cache_path}")
-            return int(cached["delay_ms"])
-
     local_candidates: list[tuple[str, Path, Path]] = []
     for a in assets:
         base = _base_from_asset(a)
@@ -307,7 +369,6 @@ def estimate_series_delay_ms(
         return DEFAULT_SUBTITLE_DELAY_MS
 
     estimates: list[DelayEstimate] = []
-    by_ep: dict[str, dict] = {}
     for base, mp4, srt in local_candidates:
         try:
             cues = parse_srt(srt.read_text(encoding="utf-8", errors="replace"))
@@ -317,7 +378,7 @@ def estimate_series_delay_ms(
                 asr_est = _estimate_by_asr(
                     cues=cues,
                     mp4_path=mp4,
-                    tmp_dir=srt_dir,
+                    tmp_dir=cache_dir,
                     base=base,
                     asr_backend=asr_backend,
                     asr_model=asr_model,
@@ -333,18 +394,15 @@ def estimate_series_delay_ms(
             if est is None:
                 continue
             estimates.append(est)
-            by_ep[base] = {
-                "delay_ms": est.delay_ms,
-                "confidence": round(est.confidence, 4),
-                "method": est.method,
-                "matched": est.matched,
-            }
         except Exception as e:
             error(f"subtitle auto-delay sample failed for {base}: {e}")
 
     if not estimates:
         error(f"subtitle auto-delay: all samples failed, fallback to {DEFAULT_SUBTITLE_DELAY_MS}ms")
         return DEFAULT_SUBTITLE_DELAY_MS
+
+    if scope == "episode":
+        return int(estimates[0].delay_ms)
 
     vals = [e.delay_ms for e in estimates]
     med = int(statistics.median(vals))
@@ -359,19 +417,5 @@ def estimate_series_delay_ms(
     debug(
         f"subtitle auto-delay computed: delay_ms={med} confidence={conf:.3f} "
         f"samples={len(estimates)}"
-    )
-
-    _save_cache(
-        cache_path,
-        {
-            "version": 1,
-            "computed_at": int(time.time()),
-            "mode": "hybrid",
-            "delay_ms": med,
-            "confidence": round(conf, 4),
-            "sampled_episodes": [x[0] for x in local_candidates],
-            "episode_estimates": by_ep,
-            "limits": {"max_ms": max_ms, "samples": samples},
-        },
     )
     return med

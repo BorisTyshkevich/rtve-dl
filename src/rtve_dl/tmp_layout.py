@@ -67,6 +67,9 @@ class TmpLayout:
     def srt_es_file(self, base: str) -> Path:
         return self.srt / f"{base}.spa.srt"
 
+    def srt_es_aligned_file(self, base: str) -> Path:
+        return self.srt / f"{base}.spa.aligned.srt"
+
     def srt_en_file(self, base: str) -> Path:
         return self.srt / f"{base}.eng.srt"
 
@@ -113,9 +116,6 @@ class TmpLayout:
 
     def telemetry_db(self) -> Path:
         return self.meta / "telemetry.sqlite"
-
-    def subtitle_delay_cache(self) -> Path:
-        return self.meta / "subtitle_delay.auto.json"
 
     def index_meta_ru_cache(self) -> Path:
         return self.meta / "index_meta_ru.json"
@@ -167,7 +167,10 @@ def migrate_tmp_slug_layout(layout: TmpLayout) -> None:
             dst = layout.srt / n
         elif n.endswith(".srt.log"):
             dst = layout.meta_legacy / n
-        elif n in {"telemetry.sqlite", "subtitle_delay.auto.json", "index_meta_ru.json"} or n.startswith("catalog_"):
+        elif (
+            n in {"telemetry.sqlite", "index_meta_ru.json"}
+            or n.startswith("catalog_")
+        ):
             dst = layout.meta / n
         elif n.endswith(".jsonl") or n.endswith(".tsv") or n.endswith(".jsonl.log"):
             track = _codex_track_for_name(n)

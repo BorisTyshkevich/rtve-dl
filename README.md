@@ -148,28 +148,51 @@ rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S2 \
 
 ## Subtitle Delay
 
-Default subtitle delay is `450ms` and is applied at MKV mux stage only.
+Default subtitle delay is `auto` and is applied by shifting subtitle files (mux delay remains 0).
 
 Manual delay:
 
 ```bash
 rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 \
-  -s cuentame --subtitle-delay-ms 1200
+  -s cuentame --subtitle-delay 1200
 ```
 
 Auto delay:
 
 ```bash
 rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 \
-  -s cuentame --subtitle-delay-mode auto
+  -s cuentame --subtitle-delay auto
 ```
 
-Force recompute auto delay cache:
+## Subtitle Alignment
+
+Optional WhisperX alignment retimes ES subtitles to audio without re-transcribing:
 
 ```bash
-rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 \
-  -s cuentame --subtitle-delay-mode auto --subtitle-delay-auto-refresh
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S1 \
+  -s cuentameT8 --subtitle-align whisperx --subtitle-align-device mps
 ```
+
+Note: WhisperX alignment is experimental and may not improve timing for all episodes.
+
+Flags:
+- `--subtitle-align off|whisperx` (default: off)
+- `--subtitle-align-device auto|mps|cpu` (default: auto)
+- `--subtitle-align-model <name>` (optional override)
+
+Subtitle tracks:
+- `--ru off|on|require` (default: require)
+- `--en off|on|require` (default: on)
+
+Note: When subtitle alignment is enabled, any auto/manual delay is applied as a pre-shift before alignment and mux delay is set to 0. Auto delay is computed per episode only when ES subtitles are rebuilt (i.e., `spa.srt` is missing at episode start). The pre-shifted `spa.srt` is kept for review and `spa.aligned.srt` is the only ES track muxed. When alignment is off, `spa.srt` is muxed.
+
+ES-only (skip EN/RU translations):
+```bash
+rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S1 \
+  -s cuentameT8 --ru off --en off
+```
+
+Setup guide for Apple Silicon MPS: `docs/whisperx_mps_setup.md`.
 
 ## Reset Layers
 
@@ -265,18 +288,17 @@ Controls:
 
 If ES cleanup fails, pipeline falls back to raw ES subtitles and continues.
 
-`--reset-layer subs-es` removes cleaned ES (`*.spa.srt`) and cleanup caches, but keeps raw ASR cache
-(`*.spa.asr_raw.srt`) so ES can be rebuilt without re-running ASR.
-If you need a full re-ASR, delete `tmp/<slug>/srt/<base>.spa.asr_raw.srt` manually before rerun.
+`--reset-layer subs-es` removes cleaned ES (`*.spa.srt`) and raw ASR cache (`*.spa.asr_raw.srt`).
+Rebuilding ES after reset will re-run ASR if RTVE subtitles are missing.
 
-Use MLX backend explicitly:
+Default ASR backend is WhisperX (CPU, model `small`, compute type `int8`). Use MLX backend explicitly:
 
 ```bash
 rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \
   -s cuentame --asr-backend mlx
 ```
 
-Use WhisperX backend:
+Use WhisperX backend explicitly:
 
 ```bash
 rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \

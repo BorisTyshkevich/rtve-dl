@@ -94,21 +94,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--asr-backend",
-        default="mlx",
+        default="whisperx",
         choices=["mlx", "whisperx"],
-        help="ASR backend for missing ES subtitles (default: mlx)",
+        help="ASR backend for missing ES subtitles (default: whisperx)",
     )
     parser.add_argument(
         "--asr-mlx-model",
         default="mlx-community/whisper-small-mlx",
         help="MLX Whisper model repo (used when --asr-backend mlx)",
     )
-    parser.add_argument("--asr-model", default="large-v3", help="WhisperX model for ES subtitle fallback")
+    parser.add_argument("--asr-model", default="small", help="WhisperX model for ES subtitle fallback")
     parser.add_argument("--asr-device", default="cpu", help="WhisperX device (default: cpu)")
     parser.add_argument(
         "--asr-compute-type",
-        default="float32",
-        help="WhisperX compute type (default: float32)",
+        default="int8",
+        help="WhisperX compute type (default: int8)",
     )
     parser.add_argument("--asr-batch-size", type=int, default=8, help="WhisperX batch size (default: 8)")
     parser.add_argument(
@@ -118,22 +118,16 @@ def main(argv: list[str] | None = None) -> int:
         help="WhisperX VAD method (default: silero)",
     )
     parser.add_argument(
-        "--translate-en-if-missing",
-        default=True,
-        action=argparse.BooleanOptionalAction,
-        help="If RTVE doesn't provide English subs, translate ES->EN via Codex. Default: enabled.",
+        "--ru",
+        default="require",
+        choices=["off", "on", "require"],
+        help="Russian subtitles: off|on|require. Default: require",
     )
     parser.add_argument(
-        "--with-ru",
-        default=True,
-        action=argparse.BooleanOptionalAction,
-        help="Add Russian subtitle track (Codex batch). Default: enabled.",
-    )
-    parser.add_argument(
-        "--require-ru",
-        default=True,
-        action=argparse.BooleanOptionalAction,
-        help="Fail an episode if Russian subtitles could not be generated. Default: enabled.",
+        "--en",
+        default="on",
+        choices=["off", "on", "require"],
+        help="English subtitles: off|on|require. Default: on",
     )
     parser.add_argument(
         "--translation-backend",
@@ -195,33 +189,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Codex chunk workers per translation task. Default: 4",
     )
     parser.add_argument(
-        "--subtitle-delay-ms",
+        "--subtitle-delay",
         "--delay",
-        type=int,
-        default=DEFAULT_SUBTITLE_DELAY_MS,
+        default="auto",
         help=(
-            "Subtitle offset in milliseconds applied at MKV mux stage only. "
-            "Positive values delay subtitles; negative values make them appear earlier. "
-            f"Default: {DEFAULT_SUBTITLE_DELAY_MS}"
+            "Subtitle delay: 'auto' to estimate per series or a millisecond integer. "
+            "Applied at MKV mux stage only unless alignment is enabled."
         ),
-    )
-    parser.add_argument(
-        "--subtitle-delay-mode",
-        default="manual",
-        choices=["manual", "auto"],
-        help="Subtitle delay mode. manual uses --subtitle-delay-ms; auto estimates per series.",
-    )
-    parser.add_argument(
-        "--subtitle-delay-auto-scope",
-        default="series",
-        choices=["series", "episode"],
-        help="Auto-delay estimation scope. Default: series",
-    )
-    parser.add_argument(
-        "--subtitle-delay-auto-samples",
-        type=int,
-        default=3,
-        help="Number of local episode samples for auto-delay in series scope. Default: 3",
     )
     parser.add_argument(
         "--subtitle-delay-auto-max-ms",
@@ -230,9 +204,21 @@ def main(argv: list[str] | None = None) -> int:
         help="Max absolute subtitle delay considered by auto mode. Default: 15000",
     )
     parser.add_argument(
-        "--subtitle-delay-auto-refresh",
-        action="store_true",
-        help="Recompute auto subtitle delay even if cache exists.",
+        "--subtitle-align",
+        default="off",
+        choices=["off", "whisperx"],
+        help="Subtitle alignment backend. Default: off",
+    )
+    parser.add_argument(
+        "--subtitle-align-device",
+        default="auto",
+        choices=["auto", "mps", "cpu"],
+        help="Subtitle alignment device. auto prefers MPS on Apple Silicon. Default: auto",
+    )
+    parser.add_argument(
+        "--subtitle-align-model",
+        default=None,
+        help="Override WhisperX alignment model (advanced).",
     )
     parser.add_argument(
         "--reset-layer",
@@ -258,14 +244,24 @@ def main(argv: list[str] | None = None) -> int:
         elif a.force_chunk:
             no_chunk = False
 
+        subtitle_delay_raw = str(a.subtitle_delay).strip().lower()
+        if subtitle_delay_raw in {"auto", ""}:
+            subtitle_delay_mode = "auto"
+            subtitle_delay_ms = DEFAULT_SUBTITLE_DELAY_MS
+        else:
+            try:
+                subtitle_delay_ms = int(a.subtitle_delay)
+            except ValueError as e:
+                raise RuntimeError(f"invalid --subtitle-delay value: {a.subtitle_delay}") from e
+            subtitle_delay_mode = "manual"
+
         return download_selector(
             a.series_url,
             a.selector,
             series_slug=a.series_slug,
             quality=a.quality,
-            with_ru=a.with_ru,
-            require_ru=a.require_ru,
-            translate_en_if_missing=a.translate_en_if_missing,
+            ru_mode=a.ru,
+            en_mode=a.en,
             asr_if_missing=a.asr_if_missing,
             es_postprocess=a.es_postprocess,
             es_postprocess_force=a.es_postprocess_force,
@@ -284,12 +280,12 @@ def main(argv: list[str] | None = None) -> int:
             codex_model=a.codex_model,
             codex_chunk_cues=a.codex_chunk_cues,
             no_chunk=no_chunk,
-            subtitle_delay_ms=a.subtitle_delay_ms,
-            subtitle_delay_mode=a.subtitle_delay_mode,
-            subtitle_delay_auto_scope=a.subtitle_delay_auto_scope,
-            subtitle_delay_auto_samples=a.subtitle_delay_auto_samples,
+            subtitle_delay_ms=subtitle_delay_ms,
+            subtitle_delay_mode=subtitle_delay_mode,
             subtitle_delay_auto_max_ms=a.subtitle_delay_auto_max_ms,
-            subtitle_delay_auto_refresh=a.subtitle_delay_auto_refresh,
+            subtitle_align=a.subtitle_align,
+            subtitle_align_device=a.subtitle_align_device,
+            subtitle_align_model=a.subtitle_align_model,
             parallel=a.parallel,
             jobs_episodes=a.jobs_episodes,
             jobs_codex_chunks=a.jobs_codex_chunks,

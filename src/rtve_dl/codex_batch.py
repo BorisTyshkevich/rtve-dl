@@ -687,6 +687,7 @@ def _translate_no_chunk(
     model: str | None,
     target_language: str,
     io_tag: str,
+    chunk_size_cues: int,
     prompt_mode: str,
     context: CodexExecutionContext | None = None,
     backend: str = "claude",
@@ -864,7 +865,7 @@ def _translate_no_chunk(
         id_to_idx = {cid: idx for idx, cid in enumerate(cue_ids)}
 
         # Retry using chunked mode with context
-        retry_base = Path(str(base_path) + ".nochunk_retry")
+        retry_base = Path(str(base_path) + ".retry_chunk")
         retry_ctx = None
         if context is not None:
             retry_ctx = CodexExecutionContext(
@@ -872,19 +873,20 @@ def _translate_no_chunk(
                 run_id=context.run_id,
                 episode_id=context.episode_id,
                 track_type=context.track_type + "_retry",
-                chunk_size=min(50, len(missing)),
+                chunk_size=min(chunk_size_cues, len(missing)),
             )
 
-        # Use small chunk sizes for retry
-        for retry_sz in [min(50, len(missing)), 10, 1]:
+        # Use main chunk size for retry (cap at missing count)
+        for retry_sz in [min(chunk_size_cues, len(missing))]:
             if not missing:
                 break
+            debug(f"{backend}:{target_language.lower()}:retry chunk size={retry_sz} missing={len(missing)}")
             retry_cues = [(mid, cue_map[mid]) for mid in missing]
             retry_chunks = chunk_cues(
                 retry_cues,
                 chunk_cues=retry_sz,
                 base_path=retry_base,
-                io_tag=io_tag + "_retry",
+                io_tag=io_tag + "_retry_chunk",
                 use_context=use_context,
             )
             if use_context:
@@ -978,6 +980,10 @@ def translate_es(
     if no_chunk is None:
         no_chunk = (backend == "claude")
 
+    if no_chunk and len(cues) > 1000:
+        debug(f"{backend}:{target_language.lower()}:nochunk disabled for {len(cues)} cues; switching to chunked")
+        no_chunk = False
+
     if no_chunk:
         return _translate_no_chunk(
             cues=cues,
@@ -985,6 +991,7 @@ def translate_es(
             model=model,
             target_language=target_language,
             io_tag=io_tag,
+            chunk_size_cues=chunk_size_cues,
             prompt_mode=prompt_mode,
             context=context,
             backend=backend,

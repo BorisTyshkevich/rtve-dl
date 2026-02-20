@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rtve_dl.codex_batch import CodexExecutionContext, translate_es_with_codex
+from rtve_dl.codex_batch import CodexExecutionContext, translate_es
 
 
 def clean_es_with_codex(
@@ -16,12 +16,13 @@ def clean_es_with_codex(
     max_workers: int,
     context: CodexExecutionContext | None = None,
     backend: str = "claude",
+    no_chunk: bool | None = None,
 ) -> dict[str, str]:
     """
-    Spanish -> Spanish light editorial cleanup via translation backend chunk pipeline.
+    Spanish -> Spanish light editorial cleanup via translation backend.
     Returns id->cleaned_es_text for all cues provided.
     """
-    return translate_es_with_codex(
+    return translate_es(
         cues=cues,
         base_path=base_path,
         chunk_size_cues=chunk_size_cues,
@@ -34,4 +35,5 @@ def clean_es_with_codex(
         prompt_mode="es_clean_light",
         context=context,
         backend=backend,
+        no_chunk=no_chunk,
     )

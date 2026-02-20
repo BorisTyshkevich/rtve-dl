@@ -15,7 +15,8 @@ from rtve_dl.subs.srt import cues_to_srt
 from rtve_dl.subs.srt_parse import parse_srt
 from rtve_dl.subs.vtt import parse_vtt
 from rtve_dl.subs.dedup import deduplicate_asr_hallucinations
-from rtve_dl.subs.delay_auto import estimate_series_delay_ms
+from rtve_dl.subs.delay_auto import estimate_series_delay_ms, _base_from_asset
+from rtve_dl.subs.align_whisperx import align_cues_with_whisperx
 from rtve_dl.log import debug, error, stage
 from rtve_dl.codex_ru import translate_es_to_ru_with_codex
 from rtve_dl.codex_ru_refs import translate_es_to_ru_refs_with_codex
@@ -198,6 +199,7 @@ def _reset_selector_layers(*, paths: SeriesPaths, assets: list[SeriesAsset], lay
     for a in assets:
         prefix = _episode_prefix(a)
         asset_id = a.asset_id
+        base = _base_from_asset(a)
 
         if "mkv" in layers:
             _safe_unlink_glob(paths.out, f"{prefix}*.mkv", reason="mkv")
@@ -209,6 +211,9 @@ def _reset_selector_layers(*, paths: SeriesPaths, assets: list[SeriesAsset], lay
 
         if "subs-es" in layers:
             _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa.srt", reason="subs-es")
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa.aligned.srt", reason="subs-es")
+            # Legacy cleanup (no longer generated)
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa.shifted.srt", reason="subs-es")
             _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa.asr.srt", reason="subs-es")
             _safe_unlink_glob(paths.layout.srt, f"{prefix}*.spa.asr_raw.srt", reason="subs-es")
             _safe_unlink(paths.layout.vtt_es_file(asset_id), reason="subs-es")
@@ -261,14 +266,17 @@ def _collect_local_subs_for_mux(
     es_model_name: str = "RTVE",
     primary_model: str = "sonnet",
     force_asr: bool = False,
+    subtitle_align: str = "off",
 ) -> tuple[list[tuple[Path, str, str]], str] | None:
     """Returns (subs_list, default_subtitle_title) or None if required files missing."""
     srt_es = paths.layout.srt_es_file(base)
+    srt_es_aligned = paths.layout.srt_es_aligned_file(base)
     srt_en = paths.layout.srt_en_file(base)
     srt_ru = paths.layout.srt_ru_file(base)
     srt_bi = paths.layout.srt_refs_file(base)
     srt_bi_full = paths.layout.srt_bi_full_file(base)
     _remove_if_empty(srt_es, kind="srt")
+    _remove_if_empty(srt_es_aligned, kind="srt")
     _remove_if_empty(srt_en, kind="srt")
     _remove_if_empty(srt_ru, kind="srt")
     _remove_if_empty(srt_bi, kind="srt")
@@ -297,7 +305,11 @@ def _collect_local_subs_for_mux(
 
         subs: list[tuple[Path, str, str]] = []
         # RTVE ES if available
-        if _is_nonempty_file(srt_es):
+        if subtitle_align == "whisperx":
+            if not _is_nonempty_file(srt_es_aligned):
+                return None
+            subs.append((srt_es_aligned, "spa", f"{es_model_name} (aligned)"))
+        elif _is_nonempty_file(srt_es):
             subs.append((srt_es, "spa", es_model_name))
         # RTVE EN if available
         if _is_nonempty_file(srt_en):
@@ -321,10 +333,14 @@ def _collect_local_subs_for_mux(
         return subs, "ES+RU refs/ASR"
 
     # Normal mode
-    if not _is_nonempty_file(srt_es):
-        return None
-
-    subs = [(srt_es, "spa", es_model_name)]
+    if subtitle_align == "whisperx":
+        if not _is_nonempty_file(srt_es_aligned):
+            return None
+        subs = [(srt_es_aligned, "spa", f"{es_model_name} (aligned)")]
+    else:
+        if not _is_nonempty_file(srt_es):
+            return None
+        subs = [(srt_es, "spa", es_model_name)]
     if translate_en_if_missing:
         if not _is_nonempty_file(srt_en):
             return None
@@ -428,9 +444,8 @@ def download_selector(
     *,
     series_slug: str | None,
     quality: str,
-    with_ru: bool,
-    require_ru: bool,
-    translate_en_if_missing: bool,
+    ru_mode: str = "require",
+    en_mode: str = "on",
     asr_if_missing: bool,
     force_asr: bool = False,
     es_postprocess: bool,
@@ -450,17 +465,27 @@ def download_selector(
     codex_chunk_cues: int = 500,
     no_chunk: bool | None = None,
     subtitle_delay_ms: int = DEFAULT_SUBTITLE_DELAY_MS,
-    subtitle_delay_mode: str = "manual",
-    subtitle_delay_auto_scope: str = "series",
-    subtitle_delay_auto_samples: int = 3,
+    subtitle_delay_mode: str = "auto",
     subtitle_delay_auto_max_ms: int = 15000,
-    subtitle_delay_auto_refresh: bool = False,
+    subtitle_align: str = "off",
+    subtitle_align_device: str = "auto",
+    subtitle_align_model: str | None = None,
     parallel: bool = True,
     jobs_episodes: int = 2,
     jobs_codex_chunks: int = 4,
     reset_layers: list[str] | None = None,
 ) -> int:
     http = HttpClient()
+    ru_mode = (ru_mode or "require").strip().lower()
+    en_mode = (en_mode or "on").strip().lower()
+    if ru_mode not in {"off", "on", "require"}:
+        raise RuntimeError(f"invalid ru_mode: {ru_mode}")
+    if en_mode not in {"off", "on", "require"}:
+        raise RuntimeError(f"invalid en_mode: {en_mode}")
+    with_ru = ru_mode != "off"
+    require_ru = ru_mode == "require"
+    translate_en_if_missing = en_mode != "off"
+    require_en = en_mode == "require"
     paths = _paths_for(series_url, series_slug)
     _ensure_dirs(paths)
 
@@ -503,28 +528,14 @@ def download_selector(
 
     effective_subtitle_delay_ms = subtitle_delay_ms
     if subtitle_delay_mode == "auto":
-        with stage("subtitle-delay:auto"):
-            effective_subtitle_delay_ms = estimate_series_delay_ms(
-                assets=assets,
-                mp4_dir=paths.layout.mp4,
-                srt_dir=paths.layout.srt,
-                cache_dir=paths.layout.meta,
-                out_dir=paths.out,
-                scope=subtitle_delay_auto_scope,
-                samples=max(1, subtitle_delay_auto_samples),
-                max_ms=max(1, subtitle_delay_auto_max_ms),
-                refresh=subtitle_delay_auto_refresh,
-                asr_backend=asr_backend,
-                asr_model=asr_model,
-                asr_device=asr_device,
-                asr_compute_type=asr_compute_type,
-                asr_batch_size=asr_batch_size,
-                asr_vad_method=asr_vad_method,
-                asr_mlx_model=asr_mlx_model,
-            )
-        debug(f"subtitle delay selected: {effective_subtitle_delay_ms}ms (mode=auto)")
+        effective_subtitle_delay_ms = 0
     else:
         debug(f"subtitle delay selected: {effective_subtitle_delay_ms}ms (mode=manual)")
+    align_base_delay_ms = effective_subtitle_delay_ms
+    if subtitle_align != "off":
+        if align_base_delay_ms:
+            debug(f"subtitle align pre-shift: {align_base_delay_ms}ms (will zero mux delay)")
+        effective_subtitle_delay_ms = 0
 
     resolver = RtveResolver(http)
     is_season = "S" not in selector.upper()
@@ -551,7 +562,47 @@ def download_selector(
             out_mkv = paths.out / f"{base}.mkv"
             mp4_path = paths.layout.mp4_file(base)
             srt_es = paths.layout.srt_es_file(base)
+            srt_es_aligned = paths.layout.srt_es_aligned_file(base)
             srt_es_raw = paths.layout.srt / f"{base}.spa.asr_raw.srt"
+            es_srt_preexisting = _is_nonempty_file(srt_es)
+            def _episode_subtitle_delay_ms() -> int:
+                if subtitle_delay_mode != "auto":
+                    return effective_subtitle_delay_ms
+                if es_srt_preexisting:
+                    debug("subtitle delay auto skipped: spa.srt already exists")
+                    return 0
+                with stage(f"subtitle-delay:auto:episode:{a.asset_id}"):
+                    delay_ms = estimate_series_delay_ms(
+                        assets=[a],
+                        mp4_dir=paths.layout.mp4,
+                        srt_dir=paths.layout.srt,
+                        cache_dir=paths.layout.meta,
+                        out_dir=paths.out,
+                        scope="episode",
+                        samples=1,
+                        max_ms=max(1, subtitle_delay_auto_max_ms),
+                        asr_backend=asr_backend,
+                        asr_model=asr_model,
+                        asr_device=asr_device,
+                        asr_compute_type=asr_compute_type,
+                        asr_batch_size=asr_batch_size,
+                        asr_vad_method=asr_vad_method,
+                        asr_mlx_model=asr_mlx_model,
+                    )
+                debug(f"subtitle delay computed (episode): {delay_ms}ms")
+                return delay_ms
+
+            episode_delay_ms: int | None = None
+            def _shift_cues(cues_in: list, delay_ms: int) -> list:
+                if delay_ms == 0:
+                    return cues_in
+                from rtve_dl.subs.vtt import Cue
+                shifted_local = []
+                for c in cues_in:
+                    start_ms = max(0, c.start_ms + delay_ms)
+                    end_ms = max(start_ms + 1, c.end_ms + delay_ms)
+                    shifted_local.append(Cue(start_ms=start_ms, end_ms=end_ms, text=c.text))
+                return shifted_local
             _remove_if_empty(out_mkv, kind="mkv")
             if out_mkv.exists():
                 debug(f"skip mkv exists (pre-resolve): {out_mkv}")
@@ -564,22 +615,28 @@ def download_selector(
             local_result = _collect_local_subs_for_mux(
                 base=base,
                 paths=paths,
-                with_ru=with_ru,
-                translate_en_if_missing=translate_en_if_missing,
+                with_ru=(ru_mode != "off"),
+                translate_en_if_missing=(en_mode != "off"),
                 primary_model=primary_model,
                 force_asr=force_asr,
+                subtitle_align=subtitle_align,
             )
-            if local_result is not None and is_valid_mp4(mp4_path) and _mp4_matches_es_srt(mp4_path, srt_es):
+            srt_es_match = srt_es_aligned if (subtitle_align != "off" and _is_nonempty_file(srt_es_aligned)) else srt_es
+            if local_result is not None and is_valid_mp4(mp4_path) and _mp4_matches_es_srt(mp4_path, srt_es_match):
                 local_subs, local_default_title = local_result
                 debug(f"local inputs ready (pre-resolve), skipping resolve: {base}")
                 _ep_log(ep_tag, "mux")
+                if subtitle_align != "off":
+                    episode_delay_ms = 0
+                else:
+                    episode_delay_ms = _episode_subtitle_delay_ms()
                 with stage(f"mux:{a.asset_id}"):
                     tmp_out = Path(str(out_mkv) + ".partial.mkv")
                     mux_mkv(
                         video_path=mp4_path,
                         out_mkv=tmp_out,
                         subs=local_subs,
-                        subtitle_delay_ms=effective_subtitle_delay_ms,
+                        subtitle_delay_ms=episode_delay_ms,
                         default_subtitle_title=local_default_title,
                     )
                     tmp_out.replace(out_mkv)
@@ -588,18 +645,23 @@ def download_selector(
                 print(out_mkv)
                 return None
 
-            _ep_log(ep_tag, "resolve")
-            with stage(f"resolve:{a.asset_id}"):
-                resolved = resolver.resolve(a.asset_id, ignore_drm=True)
+            resolved = None
+            need_resolve = (not is_valid_mp4(mp4_path)) or (not _is_nonempty_file(srt_es))
+            if need_resolve:
+                _ep_log(ep_tag, "resolve")
+                with stage(f"resolve:{a.asset_id}"):
+                    resolved = resolver.resolve(a.asset_id, ignore_drm=True)
 
-            title = a.title or resolved.title or a.asset_id
-            base = f"S{season_num:02d}E{episode_num:02d}_{_slug_title(title)}"
-            ep_tag = base
-            _ep_log(ep_tag, "resolved")
+                title = a.title or (resolved.title if resolved else None) or a.asset_id
+                base = f"S{season_num:02d}E{episode_num:02d}_{_slug_title(title)}"
+                ep_tag = base
+                _ep_log(ep_tag, "resolved")
 
-            out_mkv = paths.out / f"{base}.mkv"
-            mp4_path = paths.layout.mp4_file(base)
-            srt_es = paths.layout.srt_es_file(base)
+                out_mkv = paths.out / f"{base}.mkv"
+                mp4_path = paths.layout.mp4_file(base)
+                srt_es = paths.layout.srt_es_file(base)
+                srt_es_aligned = paths.layout.srt_es_aligned_file(base)
+                es_srt_preexisting = _is_nonempty_file(srt_es)
             _remove_if_empty(out_mkv, kind="mkv")
             if out_mkv.exists():
                 debug(f"skip mkv exists: {out_mkv}")
@@ -610,6 +672,11 @@ def download_selector(
 
             # Video + ES subtitles are independent, so run in parallel.
             def _task_video(force_redownload: bool = False) -> None:
+                if resolved is None:
+                    if is_valid_mp4(mp4_path):
+                        debug(f"cache hit mp4: {mp4_path}")
+                        return
+                    raise RuntimeError(f"{a.asset_id}: resolve required to download video")
                 video_url = _pick_video_url(resolved.video_urls, quality)
                 if force_redownload and mp4_path.exists():
                     error(f"{a.asset_id}: forcing mp4 re-download: {mp4_path}")
@@ -681,17 +748,18 @@ def download_selector(
 
             def _task_es() -> tuple[list, str, str]:
                 """Returns (cues, source, model_name) for ES subtitles."""
-                if resolved.subtitles_es_vtt:
+                if resolved is not None and resolved.subtitles_es_vtt:
                     with stage(f"download:subs:es:{a.asset_id}"):
                         es_vtt = paths.layout.vtt_es_file(a.asset_id)
                         _download_sub_vtt(http, resolved.subtitles_es_vtt, es_vtt)
                     with stage(f"build:srt:es:{a.asset_id}"):
                         _remove_if_empty(srt_es, kind="srt")
                         es_cues_local = parse_vtt(es_vtt.read_text(encoding="utf-8"))
-                        if not _is_nonempty_file(srt_es):
-                            srt_es.write_text(cues_to_srt(es_cues_local), encoding="utf-8")
-                        else:
-                            debug(f"cache hit srt: {srt_es}")
+                        srt_es.write_text(cues_to_srt(es_cues_local), encoding="utf-8")
+                    es_cues_local = _run_es_postprocess(es_cues_local=es_cues_local, source="rtve")
+                    return es_cues_local, "rtve", "RTVE"
+                if _is_nonempty_file(srt_es):
+                    es_cues_local = parse_srt(srt_es.read_text(encoding="utf-8"))
                     es_cues_local = _run_es_postprocess(es_cues_local=es_cues_local, source="rtve")
                     return es_cues_local, "rtve", "RTVE"
 
@@ -702,57 +770,46 @@ def download_selector(
                 with stage(f"build:srt:es_asr:{a.asset_id}"):
                     _remove_if_empty(srt_es_raw, kind="srt")
                     _remove_if_empty(srt_es, kind="srt")
-                    if not _is_nonempty_file(srt_es):
-                        def _write_canonical_from_raw() -> None:
-                            if not _is_nonempty_file(srt_es_raw):
-                                raise RuntimeError(f"missing raw ASR srt: {srt_es_raw}")
-                            srt_es.write_text(srt_es_raw.read_text(encoding="utf-8"), encoding="utf-8")
-
-                        def _run_asr() -> None:
-                            if asr_backend == "mlx":
-                                transcribe_es_to_srt_with_mlx_whisper(
-                                    media_path=mp4_path,
-                                    out_srt=srt_es_raw,
-                                    model_repo=asr_mlx_model,
-                                )
-                            elif asr_backend == "whisperx":
-                                transcribe_es_to_srt_with_whisperx(
-                                    media_path=mp4_path,
-                                    out_srt=srt_es_raw,
-                                    model=asr_model,
-                                    device=asr_device,
-                                    compute_type=asr_compute_type,
-                                    batch_size=asr_batch_size,
-                                    vad_method=asr_vad_method,
-                                )
-                            else:
-                                raise RuntimeError(f"unsupported ASR backend: {asr_backend}")
-
-                        if _is_nonempty_file(srt_es_raw):
-                            debug(f"{a.asset_id}: reusing cached raw ASR subtitles: {srt_es_raw}")
+                    def _run_asr() -> None:
+                        if asr_backend == "mlx":
+                            transcribe_es_to_srt_with_mlx_whisper(
+                                media_path=mp4_path,
+                                out_srt=srt_es_raw,
+                                model_repo=asr_mlx_model,
+                            )
+                        elif asr_backend == "whisperx":
+                            transcribe_es_to_srt_with_whisperx(
+                                media_path=mp4_path,
+                                out_srt=srt_es_raw,
+                                model=asr_model,
+                                device=asr_device,
+                                compute_type=asr_compute_type,
+                                batch_size=asr_batch_size,
+                                vad_method=asr_vad_method,
+                            )
                         else:
-                            try:
-                                _run_asr()
-                            except Exception as e:
-                                msg = str(e).lower()
-                                recoverable = (
-                                    "failed to load audio" in msg
-                                    or "invalid data found when processing input" in msg
-                                    or "no such file or directory" in msg
-                                )
-                                if not recoverable:
-                                    raise
-                                error(f"{a.asset_id}: ASR failed, retrying after forced mp4 re-download")
-                                _task_video(force_redownload=True)
-                                _run_asr()
-                        _write_canonical_from_raw()
+                            raise RuntimeError(f"unsupported ASR backend: {asr_backend}")
+
+                    if _is_nonempty_file(srt_es_raw):
+                        debug(f"{a.asset_id}: reusing cached raw ASR subtitles: {srt_es_raw}")
                     else:
-                        debug(f"cache hit srt: {srt_es}")
-                        if not _is_nonempty_file(srt_es_raw):
-                            try:
-                                srt_es_raw.write_text(srt_es.read_text(encoding="utf-8"), encoding="utf-8")
-                            except OSError:
-                                pass
+                        try:
+                            _run_asr()
+                        except Exception as e:
+                            msg = str(e).lower()
+                            recoverable = (
+                                "failed to load audio" in msg
+                                or "invalid data found when processing input" in msg
+                                or "no such file or directory" in msg
+                            )
+                            if not recoverable:
+                                raise
+                            error(f"{a.asset_id}: ASR failed, retrying after forced mp4 re-download")
+                            _task_video(force_redownload=True)
+                            _run_asr()
+                    if not _is_nonempty_file(srt_es_raw):
+                        raise RuntimeError(f"missing raw ASR srt: {srt_es_raw}")
+                    srt_es.write_text(srt_es_raw.read_text(encoding="utf-8"), encoding="utf-8")
                     es_cues_local = parse_srt(srt_es.read_text(encoding="utf-8"))
                     # Remove ASR repetition hallucinations before further processing
                     es_cues_local = deduplicate_asr_hallucinations(es_cues_local)
@@ -763,6 +820,80 @@ def download_selector(
                     else:
                         asr_model_name = f"whisperx-{asr_model}"  # e.g. "whisperx-large-v3"
                     return es_cues_local, "asr", asr_model_name
+
+            def _task_es_align(es_cues_input: list) -> list:
+                if subtitle_align == "off":
+                    return es_cues_input
+                if subtitle_align != "whisperx":
+                    raise RuntimeError(f"unknown subtitle alignment backend: {subtitle_align}")
+                align_pre_shift_ms = align_base_delay_ms
+                if subtitle_delay_mode == "auto":
+                    with stage(f"subtitle-delay:auto:episode:{a.asset_id}"):
+                        align_pre_shift_ms = estimate_series_delay_ms(
+                            assets=[a],
+                            mp4_dir=paths.layout.mp4,
+                            srt_dir=paths.layout.srt,
+                            cache_dir=paths.layout.meta,
+                            out_dir=paths.out,
+                            scope="episode",
+                            samples=1,
+                            max_ms=max(1, subtitle_delay_auto_max_ms),
+                            asr_backend=asr_backend,
+                            asr_model=asr_model,
+                            asr_device=asr_device,
+                            asr_compute_type=asr_compute_type,
+                            asr_batch_size=asr_batch_size,
+                            asr_vad_method=asr_vad_method,
+                            asr_mlx_model=asr_mlx_model,
+                        )
+                    debug(f"subtitle delay computed (episode): {align_pre_shift_ms}ms")
+                    debug(f"subtitle align pre-shift (episode): {align_pre_shift_ms}ms")
+                if align_pre_shift_ms:
+                    from rtve_dl.subs.vtt import Cue
+
+                    shifted = []
+                    for c in es_cues_input:
+                        start_ms = max(0, c.start_ms + align_pre_shift_ms)
+                        end_ms = max(start_ms + 1, c.end_ms + align_pre_shift_ms)
+                        shifted.append(Cue(start_ms=start_ms, end_ms=end_ms, text=c.text))
+                    es_cues_input = shifted
+                srt_es.write_text(cues_to_srt(es_cues_input), encoding="utf-8")
+                _remove_if_empty(srt_es_aligned, kind="srt")
+                if _is_nonempty_file(srt_es_aligned):
+                    debug(f"cache hit srt (aligned): {srt_es_aligned}")
+                    return parse_srt(srt_es_aligned.read_text(encoding="utf-8", errors="replace"))
+                with stage(f"build:srt:es_align:{a.asset_id}"):
+                    if not mp4_path.exists():
+                        _task_video()
+                    aligned = align_cues_with_whisperx(
+                        media_path=mp4_path,
+                        cues=es_cues_input,
+                        device_mode=subtitle_align_device,
+                        align_model=subtitle_align_model,
+                    )
+                    try:
+                        import statistics
+
+                        diffs = [
+                            (aligned[i].start_ms - es_cues_input[i].start_ms)
+                            for i in range(min(len(aligned), len(es_cues_input)))
+                        ]
+                        if diffs:
+                            debug(
+                                "subtitle align delta ms (aligned - original): "
+                                f"median={int(statistics.median(diffs))} "
+                                f"min={int(min(diffs))} max={int(max(diffs))}"
+                            )
+                    except Exception:
+                        pass
+                    srt_es_aligned.write_text(cues_to_srt(aligned), encoding="utf-8")
+                return aligned
+
+            def _maybe_align_es(es_cues_input: list, es_title: str) -> tuple[list, Path, str]:
+                if subtitle_align == "off":
+                    return es_cues_input, srt_es, es_title
+                aligned = _task_es_align(es_cues_input)
+                return aligned, srt_es_aligned, f"{es_title} (aligned)"
 
             def _ensure_mp4_consistent_with_es() -> None:
                 if not _is_nonempty_file(srt_es):
@@ -1004,7 +1135,9 @@ def download_selector(
             subs: list[tuple[Path, str, str]] = []
 
             def _task_en() -> tuple[Path, str, str] | None:
-                if resolved.subtitles_en_vtt:
+                if en_mode == "off":
+                    return None
+                if resolved is not None and resolved.subtitles_en_vtt:
                     with stage(f"download:subs:en:{a.asset_id}"):
                         _download_sub_vtt(http, resolved.subtitles_en_vtt, paths.layout.vtt_en_file(a.asset_id))
                     with stage(f"build:srt:en:{a.asset_id}"):
@@ -1013,6 +1146,8 @@ def download_selector(
                         srt_en = paths.layout.srt_en_file(base)
                         _remove_if_empty(srt_en, kind="srt")
                         if not _is_nonempty_file(srt_en):
+                            if subtitle_delay_mode == "auto" and episode_delay_ms:
+                                en_cues = _shift_cues(en_cues, episode_delay_ms)
                             srt_en.write_text(cues_to_srt(en_cues), encoding="utf-8")
                         else:
                             debug(f"cache hit srt: {srt_en}")
@@ -1066,7 +1201,7 @@ def download_selector(
             def _task_ru() -> list[tuple[Path, str, str]]:
                 if not with_ru:
                     if require_ru:
-                        raise RuntimeError("RU subtitles are required but disabled (--no-with-ru)")
+                        raise RuntimeError("RU subtitles are required but disabled (--ru require)")
                     return []
                 with stage(f"build:srt:ru:{a.asset_id}"):
                     srt_ru = paths.layout.srt_ru_file(base)
@@ -1200,7 +1335,8 @@ def download_selector(
                 rtve_es_available = resolved.subtitles_es_vtt is not None
                 if rtve_es_available:
                     es_cues, _es_source, es_model_name = _task_es()
-                    subs.append((srt_es, "spa", es_model_name))
+                    es_cues, srt_es_out, es_title = _maybe_align_es(es_cues, es_model_name)
+                    subs.append((srt_es_out, "spa", es_title))
 
                 # RTVE EN if available
                 if resolved.subtitles_en_vtt:
@@ -1265,30 +1401,46 @@ def download_selector(
                 # Normal mode with parallel execution
                 # ES subtitle download can run in parallel with video download.
                 # But ASR fallback requires a fully downloaded MP4, so keep that path sequential.
-                if resolved.subtitles_es_vtt:
+                if resolved is not None and resolved.subtitles_es_vtt:
                     with ThreadPoolExecutor(max_workers=1) as video_pool:
                         video_future = video_pool.submit(_task_video)
                         es_cues, _es_source, es_model_name = _task_es()
-                        subs.append((srt_es, "spa", es_model_name))
+                        if episode_delay_ms is None:
+                            episode_delay_ms = 0 if subtitle_align != "off" else _episode_subtitle_delay_ms()
+                        if subtitle_delay_mode == "auto" and subtitle_align == "off" and episode_delay_ms:
+                            es_cues = _shift_cues(es_cues, episode_delay_ms)
+                            srt_es.write_text(cues_to_srt(es_cues), encoding="utf-8")
+                        es_cues, srt_es_out, es_title = _maybe_align_es(es_cues, es_model_name)
+                        subs.append((srt_es_out, "spa", es_title))
                         video_future.result()
                         _ensure_mp4_consistent_with_es()
                         _ep_log(ep_tag, "translations")
                         with ThreadPoolExecutor(max_workers=2) as tr_pool:
                             fut_ru = tr_pool.submit(_task_ru)
                             fut_en = tr_pool.submit(_task_en)
-                            try:
-                                en_track = fut_en.result()
-                                if en_track is not None:
-                                    subs.append(en_track)
-                            except Exception as e:
-                                # EN fallback errors should not fail episode.
-                                error(f"{a.asset_id}: EN subtitle fallback failed (continuing): {e}")
-                            ru_tracks = fut_ru.result()
-                            subs.extend(ru_tracks)
+                        try:
+                            en_track = fut_en.result()
+                            if en_track is not None:
+                                subs.append(en_track)
+                            elif require_en:
+                                raise RuntimeError("EN subtitles are required but missing")
+                        except Exception as e:
+                            if require_en:
+                                raise
+                            # EN fallback errors should not fail episode.
+                            error(f"{a.asset_id}: EN subtitle fallback failed (continuing): {e}")
+                        ru_tracks = fut_ru.result()
+                        subs.extend(ru_tracks)
                 else:
                     _task_video()
                     es_cues, _es_source, es_model_name = _task_es()
-                    subs.append((srt_es, "spa", es_model_name))
+                    if episode_delay_ms is None:
+                        episode_delay_ms = 0 if subtitle_align != "off" else _episode_subtitle_delay_ms()
+                    if subtitle_delay_mode == "auto" and subtitle_align == "off" and episode_delay_ms:
+                        es_cues = _shift_cues(es_cues, episode_delay_ms)
+                        srt_es.write_text(cues_to_srt(es_cues), encoding="utf-8")
+                    es_cues, srt_es_out, es_title = _maybe_align_es(es_cues, es_model_name)
+                    subs.append((srt_es_out, "spa", es_title))
                     _ensure_mp4_consistent_with_es()
                     _ep_log(ep_tag, "translations")
                     with ThreadPoolExecutor(max_workers=2) as tr_pool:
@@ -1298,7 +1450,11 @@ def download_selector(
                             en_track = fut_en.result()
                             if en_track is not None:
                                 subs.append(en_track)
+                            elif require_en:
+                                raise RuntimeError("EN subtitles are required but missing")
                         except Exception as e:
+                            if require_en:
+                                raise
                             error(f"{a.asset_id}: EN subtitle fallback failed (continuing): {e}")
                         ru_tracks = fut_ru.result()
                         subs.extend(ru_tracks)
@@ -1306,25 +1462,39 @@ def download_selector(
                 # Normal mode without parallel execution
                 _task_video()
                 es_cues, _es_source, es_model_name = _task_es()
-                subs.append((srt_es, "spa", es_model_name))
+                if episode_delay_ms is None:
+                    episode_delay_ms = 0 if subtitle_align != "off" else _episode_subtitle_delay_ms()
+                if subtitle_delay_mode == "auto" and subtitle_align == "off" and episode_delay_ms:
+                    es_cues = _shift_cues(es_cues, episode_delay_ms)
+                    srt_es.write_text(cues_to_srt(es_cues), encoding="utf-8")
+                es_cues, srt_es_out, es_title = _maybe_align_es(es_cues, es_model_name)
+                subs.append((srt_es_out, "spa", es_title))
                 _ensure_mp4_consistent_with_es()
                 _ep_log(ep_tag, "translations")
                 try:
                     en_track = _task_en()
                     if en_track is not None:
                         subs.append(en_track)
+                    elif require_en:
+                        raise RuntimeError("EN subtitles are required but missing")
                 except Exception as e:
+                    if require_en:
+                        raise
                     error(f"{a.asset_id}: EN subtitle fallback failed (continuing): {e}")
                 subs.extend(_task_ru())
 
             _ep_log(ep_tag, "mux")
             with stage(f"mux:{a.asset_id}"):
                 tmp_out = Path(str(out_mkv) + ".partial.mkv")
+                if episode_delay_ms is None:
+                    episode_delay_ms = 0 if subtitle_align != "off" else _episode_subtitle_delay_ms()
+                if subtitle_delay_mode == "auto" and subtitle_align == "off":
+                    episode_delay_ms = 0
                 mux_mkv(
                     video_path=mp4_path,
                     out_mkv=tmp_out,
                     subs=subs,
-                    subtitle_delay_ms=effective_subtitle_delay_ms,
+                    subtitle_delay_ms=episode_delay_ms,
                     default_subtitle_title=default_subtitle_title,
                 )
                 tmp_out.replace(out_mkv)

@@ -18,7 +18,7 @@ CLI
        -> Build EN subtitles (RTVE EN or ES->EN MT fallback)
        -> Build RU subtitles (full RU + RU refs)
        -> Build bilingual track (ES + full RU) from existing RU map
-       -> Mux MKV with subtitle delay applied at mux stage
+       -> Mux MKV with subtitles already shifted (mux delay = 0)
   -> Generate/update slug index.html
 ```
 
@@ -37,6 +37,7 @@ src/rtve_dl/
 ├── ffmpeg.py                 # MP4 download and MKV mux operations
 ├── asr_mlx.py                # MLX Whisper backend (Apple Silicon friendly)
 ├── asr_whisperx.py           # WhisperX backend
+├── subs/align_whisperx.py    # WhisperX alignment-only helper
 ├── codex_batch.py            # Shared Codex chunk engine (TSV payload + JSONL cache)
 ├── codex_ru.py               # ES -> RU full translation
 ├── codex_ru_refs.py          # ES -> RU gloss references (B2/C1/C2)
@@ -85,6 +86,51 @@ Current prompt modes:
 - `ru_refs_b2plus` -> Russian glossary references for difficult ES terms
 - `translate_en` -> fallback English track
 - `es_clean_light` -> light editorial cleanup for Spanish subtitles
+
+## Translation Modes
+
+Two execution strategies are available:
+
+### No-Chunk Mode (Default for Claude)
+
+All cues are sent in a single API request:
+
+```text
+[1813 cues] -> [Single Request] -> [1813 translations]
+```
+
+Characteristics:
+- **Full context**: Model sees entire episode script
+- **Simple resume**: Single `.nochunk.out.jsonl` per track
+- **No parallelism**: Single request per track
+- **Better consistency**: No chunk boundary effects
+
+Enabled by default for `--translation-backend claude` (200K context window).
+
+### Chunked Mode (Default for Codex)
+
+Cues are split into batches and processed in parallel:
+
+```text
+[1813 cues] -> [chunk_cues(500)] -> 4 chunks
+                                    -> [parallel workers]
+                                    -> [merge results]
+```
+
+Characteristics:
+- **Parallel execution**: `--jobs-codex-chunks` workers
+- **Resumable**: Skip completed chunks on restart
+- **Context hints**: Adds prev/next cue columns to help smaller models
+- **Retry logic**: Failed chunks retry at smaller sizes (50, 10, 1)
+
+Required for models with limited context windows (8K-32K tokens).
+
+### Mode Selection
+
+| Backend | Default | Override |
+|---------|---------|----------|
+| Claude | No-chunk | `--chunked` |
+| Codex | Chunked | `--no-chunk` |
 
 ## Subtitle Tracks in Output MKV
 

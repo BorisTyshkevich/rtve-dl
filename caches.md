@@ -40,7 +40,8 @@ For an episode base name `SxxExx_<title>` and `asset_id`:
 
 - Built subtitles
   - `tmp/<slug>/srt/<base>.spa.asr_raw.srt` (raw ASR output, when ASR fallback used)
-  - `tmp/<slug>/srt/<base>.spa.srt`
+  - `tmp/<slug>/srt/<base>.spa.srt` (pre-shifted when alignment is enabled)
+  - `tmp/<slug>/srt/<base>.spa.aligned.srt` (WhisperX-aligned ES subtitles)
   - `tmp/<slug>/srt/<base>.eng.srt`
   - `tmp/<slug>/srt/<base>.rus.srt`
   - `tmp/<slug>/srt/<base>.spa_rus.srt`
@@ -81,7 +82,6 @@ For an episode base name `SxxExx_<title>` and `asset_id`:
 ## Slug Cache Objects
 
 - `tmp/<slug>/meta/catalog_<hash>.json` (TTL: 7 days)
-- `tmp/<slug>/meta/subtitle_delay.auto.json`
 - `tmp/<slug>/meta/index_meta_ru.json`
 - `tmp/<slug>/meta/telemetry.sqlite`
   - schema defined in `src/rtve_dl/sql/schema.sql`
@@ -134,10 +134,11 @@ Episode layers:
 
 - `subs-es`
   - `tmp/<slug>/srt/SxxExx_*.spa.srt` for selected episodes
+  - `tmp/<slug>/srt/SxxExx_*.spa.aligned.srt` for selected episodes
   - `tmp/<slug>/vtt/<asset_id>.es.vtt`
   - ES cleanup Codex chunk caches (`SxxExx_*.es_clean*`)
   - EN/RU/refs Codex chunk caches (`SxxExx_*.en*`, `SxxExx_*.ru*`, `SxxExx_*.ru_ref*`)
-  - Raw ASR cache `*.spa.asr_raw.srt` is preserved to allow ES rebuild without re-running ASR.
+  - Raw ASR cache `*.spa.asr_raw.srt` is deleted (ASR will re-run if needed).
 
 - `subs-en`
   - `tmp/<slug>/srt/SxxExx_*.eng.srt` for selected episodes

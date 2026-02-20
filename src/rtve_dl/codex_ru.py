@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rtve_dl.codex_batch import CodexExecutionContext, translate_es_with_codex
+from rtve_dl.codex_batch import CodexExecutionContext, translate_es
 
 
 def translate_es_to_ru_with_codex(
@@ -17,12 +17,13 @@ def translate_es_to_ru_with_codex(
     context: CodexExecutionContext | None = None,
     use_context: bool = True,
     backend: str = "claude",
+    no_chunk: bool | None = None,
 ) -> dict[str, str]:
     """
-    Spanish -> Russian batch translation via translation backend JSONL chunks.
+    Spanish -> Russian batch translation via translation backend.
     Returns id->ru_text for all cues provided.
     """
-    return translate_es_with_codex(
+    return translate_es(
         cues=cues,
         base_path=base_path,
         chunk_size_cues=chunk_size_cues,
@@ -36,4 +37,5 @@ def translate_es_to_ru_with_codex(
         context=context,
         use_context=use_context,
         backend=backend,
+        no_chunk=no_chunk,
     )
