@@ -12,6 +12,7 @@ Rules:
 - Output must be the full Spanish sentence from the current cue, with inline glosses only.
 - Annotate only difficult B1/B2/C1/C2 terms or phrases.
 - Do not annotate obvious A1/A2 words.
+- do not provide letter-to-letter transcriptions - `mira (мира)`.
 - Use only the current cue text (second column). Do not use neighboring cues.
 - Copy the echo column exactly as provided in input.
 - Input TSV columns:
@@ -37,6 +38,6 @@ Bad examples:
 - `446<TAB>во имя свободы; взять правосудие в свои руки`  (lost Spanish sentence)
 - `446<TAB>(libertad; justicia por nuestras manos)`  (old list format)
 - `446<TAB>... libertad (libertad) ...`  (bracket is copied Spanish, not Russian)
-
+- `446<TAB>... mira (мира) ...`  (transcribing)
 INPUT TSV:
 {{PAYLOAD}}
