@@ -17,6 +17,7 @@ def clean_es_with_codex(
     context: CodexExecutionContext | None = None,
     backend: str = "claude",
     no_chunk: bool | None = None,
+    episode_context: str | None = None,
 ) -> dict[str, str]:
     """
     Spanish -> Spanish light editorial cleanup via translation backend.
@@ -36,4 +37,5 @@ def clean_es_with_codex(
         context=context,
         backend=backend,
         no_chunk=no_chunk,
+        prompt_context=episode_context,
     )

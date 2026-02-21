@@ -81,9 +81,16 @@ def _load_prompt_template(prompt_mode: str) -> str:
     return resources.files("rtve_dl.prompts").joinpath(file_name).read_text(encoding="utf-8")
 
 
-def _build_prompt(*, tsv_payload: str, prompt_mode: str) -> str:
+def _build_prompt(*, tsv_payload: str, prompt_mode: str, prompt_context: str | None = None) -> str:
     template = _load_prompt_template(prompt_mode)
-    return template.replace("{{PAYLOAD}}", tsv_payload)
+    context_block = (prompt_context or "").strip()
+    if context_block:
+        context_block = context_block + "\n"
+    return (
+        template
+        .replace("{{EPISODE_CONTEXT}}", context_block)
+        .replace("{{PAYLOAD}}", tsv_payload)
+    )
 
 
 def _tsv_escape(value: str) -> str:
@@ -369,9 +376,10 @@ def run_codex_chunk(
     context: CodexExecutionContext | None = None,
     fallback_used: bool = False,
     backend: str = "claude",
+    prompt_context: str | None = None,
 ) -> None:
     payload = chunk.in_tsv.read_text(encoding="utf-8")
-    prompt = _build_prompt(tsv_payload=payload, prompt_mode=prompt_mode)
+    prompt = _build_prompt(tsv_payload=payload, prompt_mode=prompt_mode, prompt_context=prompt_context)
 
     if backend == "claude":
         _ensure_claude_on_path()
@@ -522,6 +530,7 @@ def _run_codex_chunks(
     prompt_mode: str,
     context: CodexExecutionContext | None,
     backend: str = "claude",
+    prompt_context: str | None = None,
 ) -> None:
     if not chunks:
         return
@@ -548,6 +557,7 @@ def _run_codex_chunks(
                         context=context,
                         fallback_used=use_fallback,
                         backend=backend,
+                        prompt_context=prompt_context,
                     )
                 except Exception as e:
                     failed.append((ch, e if isinstance(e, Exception) else RuntimeError(str(e))))
@@ -563,6 +573,7 @@ def _run_codex_chunks(
                         context=context,
                         fallback_used=use_fallback,
                         backend=backend,
+                        prompt_context=prompt_context,
                     ): ch
                     for ch in pending
                 }
@@ -613,6 +624,7 @@ def _translate_es_chunked(
     context: CodexExecutionContext | None = None,
     use_context: bool = True,
     backend: str = "claude",
+    prompt_context: str | None = None,
 ) -> dict[str, str]:
     """Chunked translation mode: split cues into batches and process in parallel."""
     chunks = chunk_cues(cues, chunk_cues=chunk_size_cues, base_path=base_path, io_tag=io_tag, use_context=use_context)
@@ -631,6 +643,7 @@ def _translate_es_chunked(
         prompt_mode=prompt_mode,
         context=context,
         backend=backend,
+        prompt_context=prompt_context,
     )
 
     merged: dict[str, str] = {}
@@ -669,6 +682,7 @@ def _translate_es_chunked(
                 prompt_mode=prompt_mode,
                 context=retry_ctx,
                 backend=backend,
+                prompt_context=prompt_context,
             )
             for ch in retry_chunks:
                 merged.update(_parse_jsonl_map(ch.out_jsonl))
@@ -692,6 +706,7 @@ def _translate_no_chunk(
     context: CodexExecutionContext | None = None,
     backend: str = "claude",
     use_context: bool = True,
+    prompt_context: str | None = None,
 ) -> dict[str, str]:
     """No-chunk translation mode: send all cues in a single request."""
     # Cache file for resume
@@ -747,7 +762,11 @@ def _translate_no_chunk(
                 )
         tsv_payload = "\n".join(tsv_lines)
 
-        prompt = _build_prompt(tsv_payload=tsv_payload, prompt_mode=prompt_mode)
+        prompt = _build_prompt(
+            tsv_payload=tsv_payload,
+            prompt_mode=prompt_mode,
+            prompt_context=prompt_context,
+        )
 
         # Output file for raw TSV response
         out_tsv = Path(str(base_path) + f".{io_tag}.nochunk.out.tsv")
@@ -934,6 +953,7 @@ def _translate_no_chunk(
                 prompt_mode=prompt_mode,
                 context=retry_ctx,
                 backend=backend,
+                prompt_context=prompt_context,
             )
             for ch in retry_chunks:
                 if ch.out_jsonl.exists():
@@ -967,6 +987,7 @@ def translate_es(
     use_context: bool = True,
     backend: str = "claude",
     no_chunk: bool | None = None,
+    prompt_context: str | None = None,
 ) -> dict[str, str]:
     """
     Unified translation entry point.
@@ -996,6 +1017,7 @@ def translate_es(
             context=context,
             backend=backend,
             use_context=use_context or (prompt_mode == "es_clean_light"),
+            prompt_context=prompt_context,
         )
     else:
         return _translate_es_chunked(
@@ -1012,6 +1034,7 @@ def translate_es(
             context=context,
             use_context=use_context,
             backend=backend,
+            prompt_context=prompt_context,
         )
 
 
@@ -1032,6 +1055,7 @@ def translate_es_with_codex(
     use_context: bool = True,
     backend: str = "claude",
     no_chunk: bool | None = None,
+    prompt_context: str | None = None,
 ) -> dict[str, str]:
     """Legacy alias for translate_es()."""
     return translate_es(
@@ -1049,4 +1073,5 @@ def translate_es_with_codex(
         use_context=use_context,
         backend=backend,
         no_chunk=no_chunk,
+        prompt_context=prompt_context,
     )

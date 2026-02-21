@@ -7,6 +7,10 @@ Task:
 - Preserve original meaning and tone.
 - Do NOT summarize, expand, translate, or rewrite heavily.
 - Keep one output line per input id.
+- Episode context is optional and may be noisy; use it only to disambiguate unclear ASR wording.
+
+Optional episode context:
+{{EPISODE_CONTEXT}}
 
 Input format (TSV per line):
 - col1: id

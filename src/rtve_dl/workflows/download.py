@@ -46,6 +46,16 @@ def _slug_title(s: str) -> str:
     return s[:80] if s else "episode"
 
 
+def _build_es_episode_context(asset: SeriesAsset) -> str | None:
+    synopsis = (asset.description or asset.short_description or "").strip()
+    if not synopsis:
+        return None
+    title = (asset.title or "").strip()
+    if title:
+        return f"Título del episodio: {title}\nSinopsis: {synopsis}"
+    return f"Sinopsis: {synopsis}"
+
+
 def _pick_video_url(urls: list[str], quality: str) -> str:
     # Prefer progressive MP4 for "mp4", otherwise a simple "best" heuristic.
     if quality == "mp4":
@@ -713,6 +723,7 @@ def download_selector(
                     if not cue_tasks:
                         return es_cues_local
                     es_clean_chunk_size = max(1, es_postprocess_chunk_cues)
+                    episode_context = _build_es_episode_context(a)
                     clean_map: dict[str, str] = {}
                     try:
                         clean_map = clean_es_with_codex(
@@ -732,6 +743,7 @@ def download_selector(
                             ),
                             backend=translation_backend,
                             no_chunk=no_chunk,
+                            episode_context=episode_context,
                         )
                     except Exception as e:
                         error(f"{a.asset_id}: ES cleanup failed, fallback to raw ES subtitles: {e}")

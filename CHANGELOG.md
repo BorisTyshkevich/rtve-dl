@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- ES cleanup (`es_clean_light`) now injects optional episode synopsis context
+  from catalog metadata once per prompt (prompt-level), keeping TSV cue format
+  unchanged.
+- Catalog `SeriesAsset` now carries normalized `shortDescription` and
+  `description` fields (HTML stripped, entities unescaped, whitespace collapsed)
+  used by ES cleanup context wiring.
+
 ## 0.3.0
 
 - Subtitle timing overhaul:

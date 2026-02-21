@@ -87,6 +87,11 @@ Current prompt modes:
 - `translate_en` -> fallback English track
 - `es_clean_light` -> light editorial cleanup for Spanish subtitles
 
+For `es_clean_light`, prompt-level episode context can be injected from catalog
+metadata (`description`/`shortDescription`) once per request to help
+disambiguate unclear ASR wording. TSV cue schema remains unchanged
+(`id`, `text`, `prev`, `next`, `echo`).
+
 ## Translation Modes
 
 Two execution strategies are available:

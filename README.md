@@ -277,6 +277,9 @@ After ASR, Spanish subtitles are post-processed by Codex (light normalization) b
 - fixes obvious ASR mistakes
 - normalizes punctuation/capitalization/accents
 - preserves meaning (no heavy rewrites)
+- uses episode-level context from RTVE catalog description (when available)
+  to disambiguate unclear ASR wording; context is injected once per prompt
+  (not repeated per cue row)
 
 Controls:
 - `--no-es-postprocess` to disable

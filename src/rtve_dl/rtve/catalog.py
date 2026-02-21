@@ -5,6 +5,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from html import unescape
 from pathlib import Path
 
 from rtve_dl.http import HttpClient
@@ -17,6 +18,8 @@ class SeriesAsset:
     asset_id: str
     episode_url: str | None
     title: str | None
+    short_description: str | None
+    description: str | None
     season: int | None
     episode: int | None
     has_drm: bool
@@ -24,6 +27,17 @@ class SeriesAsset:
 
 _PROGRAM_ID_RE = re.compile(r"/api/programas/(\d+)/")
 _SEL_RE = re.compile(r"^T(?P<t>\d+)(?:S(?P<s>\d+))?$", re.IGNORECASE)
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
+
+
+def _clean_text(s: str | None) -> str:
+    if not s:
+        return ""
+    t = unescape(s)
+    t = _TAG_RE.sub(" ", t)
+    t = _WS_RE.sub(" ", t).strip()
+    return t
 
 
 def extract_program_id_from_html(series_html: str) -> str | None:
@@ -146,7 +160,9 @@ def list_assets_for_selector(
             SeriesAsset(
                 asset_id=str(it.get("id")),
                 episode_url=it.get("htmlUrl"),
-                title=it.get("title") or it.get("longTitle") or it.get("shortTitle"),
+                title=_clean_text(it.get("title") or it.get("longTitle") or it.get("shortTitle")) or None,
+                short_description=_clean_text(it.get("shortDescription")) or None,
+                description=_clean_text(it.get("description")) or None,
                 season=temp,
                 episode=ep,
                 has_drm=bool(it.get("hasDRM") or False),
