@@ -2,7 +2,7 @@
 
 Simple RTVE.es downloader for legitimate users.
 
-Given a series URL and selector (`T7S5` or `T7`), it downloads video/subtitles, builds Russian tracks via Codex, and muxes everything to MKV.
+Given a series URL and selector (`T7S5` or `T7`), it downloads video/subtitles, builds Russian tracks via Codex or Claude, and muxes everything to MKV.
 
 ## What it produces
 
@@ -20,6 +20,7 @@ Per episode MKV can include:
 - Python 3.10+
 - `ffmpeg` on PATH
 - `codex` CLI on PATH (authenticated for non-interactive `codex exec`)
+- or `claude` CLI on PATH
 
 Codex translation defaults:
 - primary model: `gpt-5.1-codex-mini`
@@ -92,13 +93,6 @@ rtve_dl T8S1 -d     # Different season with debug
 | `-j` | `--jobs-episodes` | Episode parallelism |
 | `-m` | `--model` | Translation model (auto-routes to backend) |
 
-The `download` subcommand is optional for backward compatibility:
-
-```bash
-# These are equivalent:
-rtve_dl download "https://..." T7S5 --series-slug cuentame
-rtve_dl "https://..." T7S5 -s cuentame
-```
 
 ## Translation Backend
 
