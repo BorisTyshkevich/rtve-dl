@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0
+
 - Unified subtitle track controls with repeatable `--sub <track>=<off|on|require>`:
   - tracks: `es`, `en`, `ru`, `ru-dual`, `refs`
   - defaults: `es=on`, `en=on`, `ru=require`, `ru-dual=on`, `refs=on`
