@@ -28,8 +28,8 @@ Codex translation defaults:
 - chunk size: `500` cues (`ru_refs` is internally capped to `200`)
 
 Optional ASR fallback when ES subtitles are missing:
-- default backend: `mlx-whisper`
-- optional backend: `whisperx`
+- default backend: `whisperx`
+- optional backend: `mlx`
 
 ## Install
 
@@ -94,35 +94,40 @@ rtve_dl T8S1 -d     # Different season with debug
 | `-m` | `--model` | Translation model (auto-routes to backend) |
 
 
-## Translation Backend
+## Translation 
 
-Default backend is Claude (`--translation-backend claude`).
+Default backend for translation is Claude (`--translation-backend claude`), but can be switched to codex.  Both of them should be preconfigured to run with auth or KEY.
 
 ### No-Chunk Mode (Default for Claude)
 
-Claude's large context window (200K tokens) allows translating entire episodes in a single request:
+Claude no-chunk mode sends all cues in one request:
 
 ```bash
 rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S1 -s cuentameT8
 ```
 
-Benefits:
-- Better translation consistency (model sees full episode context)
-- Simpler caching (one file per track)
-- No chunk boundary artifacts
+Although Claude models may support very large context windows (for example 200K and, in some variants, up to 1M), large real-world subtitle payloads are often less reliable in single-request translation. Common failure modes are missing IDs or partially structured output.
+
+To keep runs stable, `rtve_dl` automatically disables no-chunk mode and switches to chunked mode when input is larger than `1000` cues.
+
+Benefits of no-chunk (when it works well):
+- Better full-episode consistency
+- Simpler cache shape
+- No chunk boundary effects
 
 ### Chunked Mode (Default for Codex)
 
-For smaller context models, chunking splits cues into batches:
+Chunked mode splits cues into batches and validates outputs per chunk:
 
 ```bash
-rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S1 \
-  -s cuentameT8 --translation-backend codex
+# assumes RTVE_SERIES_URL/RTVE_SERIES_SLUG are set (see above)
+rtve_dl T8S1 --translation-backend codex
 ```
 
 Override defaults:
 - `--chunked` - Force chunked mode (even with Claude)
-- `--no-chunk` - Force single-request mode (even with Codex)
+- `--no-chunk` - Force single-request mode (even with Codex).  
+  Note: for very large inputs (`>1000` cues), the pipeline still switches to chunked mode for reliability.
 - `--codex-chunk-cues N` - Set chunk size (default: 500)
 - `--jobs-codex-chunks N` - Parallel chunk workers (default: 4)
 
@@ -136,45 +141,62 @@ When using chunked mode, `--jobs-codex-chunks` controls parallel chunk requests:
 Example (stable chunked mode):
 
 ```bash
-rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S2 \
-  -s cuentameT8 --chunked --jobs-codex-chunks 1
-```
-
-## Subtitle Delay
-
-Default subtitle delay is `auto` and is applied by shifting subtitle files (mux delay remains 0).
-
-Manual delay:
-
-```bash
-rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S5 \
-  -s cuentame --subtitle-delay 1200
-```
-
-Auto delay:
-
-```bash
-rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7 \
-  -s cuentame --subtitle-delay auto
+rtve_dl T8S2 --chunked --jobs-codex-chunks 1
 ```
 
 ## Subtitle Alignment
 
+Sometimes source subtitles can have delay or get earlier than audio. It could be same per the whole episode or differs from cue to cue.  
+
+There are two settings --subtitle-delay and --subtitle-align to solve two different timing problems.
+
+  - --subtitle-delay auto:
+      - applies one global shift to all cues (e.g., +1200 ms)
+      - good when the whole subtitle track is uniformly early/late
+      - cheap and fast (run ASR on 5 min fragment to align)
+  - --subtitle-align whisperx:
+      - retimes cues to audio boundaries per segment
+      - good when drift is non-uniform across the episode
+      - heavier/slower, may help more but not always
+
+Default subtitle delay is `auto` (calculating from source audio stream) and is applied by shifting timestamps in subtitle files.
+
+### Manual delay:
+
+```bash
+rtve_dl T7S5 --subtitle-delay 1200
+```
+
+### Subtitle Alignment
+
 Optional WhisperX alignment retimes ES subtitles to audio without re-transcribing:
 
 ```bash
-rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S1 \
-  -s cuentameT8 --subtitle-align whisperx --subtitle-align-device mps
+rtve_dl T8S1 --subtitle-align whisperx --subtitle-align-device mps
 ```
 
-Note: WhisperX alignment is experimental and may not improve timing for all episodes.
+Note: WhisperX alignment is experimental and may not improve timing for all episodes. mpx mode (GPU) can produce wrong results.
 
 Flags:
 - `--subtitle-align off|whisperx` (default: off)
 - `--subtitle-align-device auto|mps|cpu` (default: auto)
 - `--subtitle-align-model <name>` (optional override)
 
-Subtitle tracks:
+Setup guide for Apple Silicon MPS: `docs/whisperx_mps_setup.md`.
+
+## Subtitle tracks in resulting MKV
+
+By default rtve_dl produces 5 tracks:
+- es
+- en
+- ru
+- ru-dual (es+ru)
+- ru-refs (only complicated B1+ words/phrases translated)
+
+The player (like VLC) opens ru-refs subtitle track. You can change it by `--default-subtitle` option.
+
+Disabling tracks in MKV:
+
 - `--sub <track>=<off|on|require>` (repeatable)
 - Tracks: `es`, `en`, `ru`, `ru-dual`, `refs`
 - Defaults: `es=on`, `en=on`, `ru=require`, `ru-dual=on`, `refs=on`
@@ -183,19 +205,7 @@ Subtitle tracks:
 
 Examples:
 - Disable refs only: `--sub refs=off`
-- ES-only: `--sub en=off --sub ru=off --sub ru-dual=off --sub refs=off`
-- No ES output track but keep RU: `--sub es=off --sub ru=on`
-`--default-subtitle` is strict: if selected stream is unavailable, the run fails.
-
-Note: When subtitle alignment is enabled, any auto/manual delay is applied as a pre-shift before alignment and mux delay is set to 0. Auto delay is computed per episode only when ES subtitles are rebuilt (i.e., `spa.srt` is missing at episode start). The pre-shifted `spa.srt` is kept for review and `spa.aligned.srt` is the only ES track muxed. When alignment is off, `spa.srt` is muxed.
-
-ES-only (skip EN/RU translations):
-```bash
-rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S1 \
-  -s cuentameT8 --sub en=off --sub ru=off --sub ru-dual=off --sub refs=off --default-subtitle es
-```
-
-Setup guide for Apple Silicon MPS: `docs/whisperx_mps_setup.md`.
+- RU-only: `--sub es=off --sub en=off --sub ru=on --sub ru-dual=off --sub refs=off --default-subtitle ru`
 
 ## Reset Layers
 
