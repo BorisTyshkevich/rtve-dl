@@ -321,14 +321,14 @@ rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T7S12 \
   -s cuentame --asr-backend whisperx
 ```
 
-## Notes
+## Unsorted Notes
 
-- Re-running `download` is safe and cache-based.
+- Re-running rtve_dl is safe and cache-based.
 - Global static phrase cache is loaded from `data/global_phrase_cache.json` (if present).
   Start from `global_phrase_cache.example.json`.
 - Codex chunk telemetry is written to `tmp/<slug>/meta/telemetry.sqlite`.
 - For ASR episodes, raw ES subtitles are kept as `tmp/<slug>/srt/<base>.spa.asr_raw.srt`.
-- SQL artifacts:
+- Telemetry is written into sql-lite:
   - schema bootstrap: `src/rtve_dl/sql/schema.sql`
   - analytics queries: `src/rtve_dl/sql/reports.sql`
 - The tool does not bypass DRM.

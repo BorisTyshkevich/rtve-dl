@@ -381,6 +381,8 @@ def _collect_local_subs_for_mux(
 
 
 def _srt_duration_seconds(srt_path: Path) -> float:
+    if not srt_path.exists():
+        return 0.0
     cues = parse_srt(srt_path.read_text(encoding="utf-8", errors="replace"))
     if not cues:
         return 0.0
