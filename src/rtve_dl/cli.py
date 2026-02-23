@@ -118,16 +118,20 @@ def main(argv: list[str] | None = None) -> int:
         help="WhisperX VAD method (default: silero)",
     )
     parser.add_argument(
-        "--ru",
-        default="require",
-        choices=["off", "on", "require"],
-        help="Russian subtitles: off|on|require. Default: require",
+        "--sub",
+        action="append",
+        default=[],
+        help=(
+            "Subtitle track mode override: <track>=<off|on|require>. "
+            "Tracks: es, en, ru, ru-dual, refs. "
+            "Can be repeated; last value wins for a track."
+        ),
     )
     parser.add_argument(
-        "--en",
-        default="on",
-        choices=["off", "on", "require"],
-        help="English subtitles: off|on|require. Default: on",
+        "--default-subtitle",
+        default="refs",
+        choices=["es", "en", "ru", "ru-dual", "refs"],
+        help="Default subtitle stream in MKV. Default: refs",
     )
     parser.add_argument(
         "--translation-backend",
@@ -260,8 +264,8 @@ def main(argv: list[str] | None = None) -> int:
             a.selector,
             series_slug=a.series_slug,
             quality=a.quality,
-            ru_mode=a.ru,
-            en_mode=a.en,
+            sub_modes=a.sub,
+            default_subtitle=a.default_subtitle,
             asr_if_missing=a.asr_if_missing,
             es_postprocess=a.es_postprocess,
             es_postprocess_force=a.es_postprocess_force,

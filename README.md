@@ -175,15 +175,24 @@ Flags:
 - `--subtitle-align-model <name>` (optional override)
 
 Subtitle tracks:
-- `--ru off|on|require` (default: require)
-- `--en off|on|require` (default: on)
+- `--sub <track>=<off|on|require>` (repeatable)
+- Tracks: `es`, `en`, `ru`, `ru-dual`, `refs`
+- Defaults: `es=on`, `en=on`, `ru=require`, `ru-dual=on`, `refs=on`
+- `--default-subtitle es|en|ru|ru-dual|refs` (default: refs)
+- Legacy track flags (`--en`, `--ru`, `--ru-refs`) are replaced by `--sub`.
+
+Examples:
+- Disable refs only: `--sub refs=off`
+- ES-only: `--sub en=off --sub ru=off --sub ru-dual=off --sub refs=off`
+- No ES output track but keep RU: `--sub es=off --sub ru=on`
+`--default-subtitle` is strict: if selected stream is unavailable, the run fails.
 
 Note: When subtitle alignment is enabled, any auto/manual delay is applied as a pre-shift before alignment and mux delay is set to 0. Auto delay is computed per episode only when ES subtitles are rebuilt (i.e., `spa.srt` is missing at episode start). The pre-shifted `spa.srt` is kept for review and `spa.aligned.srt` is the only ES track muxed. When alignment is off, `spa.srt` is muxed.
 
 ES-only (skip EN/RU translations):
 ```bash
 rtve_dl "https://www.rtve.es/play/videos/cuentame-como-paso/" T8S1 \
-  -s cuentameT8 --ru off --en off
+  -s cuentameT8 --sub en=off --sub ru=off --sub ru-dual=off --sub refs=off --default-subtitle es
 ```
 
 Setup guide for Apple Silicon MPS: `docs/whisperx_mps_setup.md`.
@@ -257,11 +266,11 @@ In force-asr mode:
 - ASR subtitles are always generated and translated
 - RTVE-based translations are NOT regenerated (saves API costs)
 - Cached RTVE translations from previous runs are included if they exist
-- Default subtitle track is `ES+RU refs/ASR`
+- Default subtitle track follows `--default-subtitle` (default `refs`)
 
 Track naming:
-- Normal mode: `{model} MT` for translations, `ES+RU refs` (default)
-- Force-ASR mode: `{model} MT/ASR` for ASR-based translations, `ES+RU refs/ASR` (default)
+- Normal mode: `{model} MT` for translations, `ES+RU refs`
+- Force-ASR mode: `{model} MT/ASR` for ASR-based translations, `ES+RU refs/ASR`
 
 ## ASR Fallback
 

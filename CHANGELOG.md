@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Unified subtitle track controls with repeatable `--sub <track>=<off|on|require>`:
+  - tracks: `es`, `en`, `ru`, `ru-dual`, `refs`
+  - defaults: `es=on`, `en=on`, `ru=require`, `ru-dual=on`, `refs=on`
+  - removed legacy per-track flags (`--en`, `--ru`, `--ru-refs`)
+  - `--default-subtitle` remains strict and fails when selected stream is unavailable.
+- Added track policy module and tests:
+  - new `subtitle_tracks/policy.py` for parsing/validation/dependency promotion
+  - new tests for policy behavior and local mux precheck combinations.
+- Fixed RU cache short-circuit logic:
+  - when cached `*.rus.srt` exists, RU translation now skips global-phrase-cache split
+    and Claude/Codex execution.
+  - avoids unnecessary RU model calls on `--reset mkv` remux runs.
 - ES cleanup (`es_clean_light`) now injects optional episode synopsis context
   from catalog metadata once per prompt (prompt-level), keeping TSV cue format
   unchanged.
