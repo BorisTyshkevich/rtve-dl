@@ -716,15 +716,20 @@ def download_selector(
             def _task_es() -> tuple[list, str, str]:
                 """Returns (cues, source, model_name) for ES subtitles."""
                 if resolved is not None and resolved.subtitles_es_vtt:
-                    with stage(f"download:subs:es:{a.asset_id}"):
-                        es_vtt = paths.layout.vtt_es_file(a.asset_id)
-                        _download_sub_vtt(http, resolved.subtitles_es_vtt, es_vtt)
-                    with stage(f"build:srt:es:{a.asset_id}"):
-                        _remove_if_empty(srt_es, kind="srt")
-                        es_cues_local = parse_vtt(es_vtt.read_text(encoding="utf-8"))
-                        srt_es.write_text(cues_to_srt(es_cues_local), encoding="utf-8")
-                    es_cues_local = _run_es_postprocess(es_cues_local=es_cues_local, source="rtve")
-                    return es_cues_local, "rtve", "RTVE"
+                    try:
+                        with stage(f"download:subs:es:{a.asset_id}"):
+                            es_vtt = paths.layout.vtt_es_file(a.asset_id)
+                            _download_sub_vtt(http, resolved.subtitles_es_vtt, es_vtt)
+                        with stage(f"build:srt:es:{a.asset_id}"):
+                            _remove_if_empty(srt_es, kind="srt")
+                            es_cues_local = parse_vtt(es_vtt.read_text(encoding="utf-8"))
+                            srt_es.write_text(cues_to_srt(es_cues_local), encoding="utf-8")
+                        es_cues_local = _run_es_postprocess(es_cues_local=es_cues_local, source="rtve")
+                        return es_cues_local, "rtve", "RTVE"
+                    except Exception as e:
+                        if not asr_if_missing:
+                            raise
+                        error(f"{a.asset_id}: ES subtitle fetch/parse failed, falling back to ASR: {e}")
                 if _is_nonempty_file(srt_es):
                     es_cues_local = parse_srt(srt_es.read_text(encoding="utf-8"))
                     es_cues_local = _run_es_postprocess(es_cues_local=es_cues_local, source="rtve")
@@ -1174,68 +1179,35 @@ def download_selector(
                     subs.extend(_task_ru_asr(asr_cues))
 
             elif parallel:
-                # Normal mode with parallel execution
-                # ES subtitle download can run in parallel with video download.
-                # But ASR fallback requires a fully downloaded MP4, so keep that path sequential.
-                if resolved is not None and resolved.subtitles_es_vtt:
-                    with ThreadPoolExecutor(max_workers=1) as video_pool:
-                        video_future = video_pool.submit(_task_video)
-                        es_cues, _es_source, es_model_name = _task_es()
-                        if episode_delay_ms is None:
-                            episode_delay_ms = 0 if subtitle_align != "off" else _episode_subtitle_delay_ms()
-                        if subtitle_delay_mode == "auto" and subtitle_align == "off" and episode_delay_ms:
-                            es_cues = _shift_cues(es_cues, episode_delay_ms)
-                            srt_es.write_text(cues_to_srt(es_cues), encoding="utf-8")
-                        es_cues, srt_es_out, es_title = _maybe_align_es(es_cues, es_model_name)
-                        if policy.enabled("es"):
-                            subs.append(ProducedTrack(TRACK_ES, srt_es_out, "spa", es_title))
-                        video_future.result()
-                        _ensure_mp4_consistent_with_es()
-                        _ep_log(ep_tag, "translations")
-                        with ThreadPoolExecutor(max_workers=2) as tr_pool:
-                            fut_ru = tr_pool.submit(_task_ru)
-                            fut_en = tr_pool.submit(_task_en)
-                        try:
-                            en_track = fut_en.result()
-                            if en_track is not None:
-                                subs.append(en_track)
-                            elif require_en:
-                                raise RuntimeError("EN subtitles are required but missing")
-                        except Exception as e:
-                            if require_en:
-                                raise
-                            # EN fallback errors should not fail episode.
-                            error(f"{a.asset_id}: EN subtitle fallback failed (continuing): {e}")
-                        ru_tracks = fut_ru.result()
-                        subs.extend(ru_tracks)
-                else:
-                    _task_video()
-                    es_cues, _es_source, es_model_name = _task_es()
-                    if episode_delay_ms is None:
-                        episode_delay_ms = 0 if subtitle_align != "off" else _episode_subtitle_delay_ms()
-                    if subtitle_delay_mode == "auto" and subtitle_align == "off" and episode_delay_ms:
-                        es_cues = _shift_cues(es_cues, episode_delay_ms)
-                        srt_es.write_text(cues_to_srt(es_cues), encoding="utf-8")
-                    es_cues, srt_es_out, es_title = _maybe_align_es(es_cues, es_model_name)
-                    if policy.enabled("es"):
-                        subs.append(ProducedTrack(TRACK_ES, srt_es_out, "spa", es_title))
-                    _ensure_mp4_consistent_with_es()
-                    _ep_log(ep_tag, "translations")
-                    with ThreadPoolExecutor(max_workers=2) as tr_pool:
-                        fut_ru = tr_pool.submit(_task_ru)
-                        fut_en = tr_pool.submit(_task_en)
-                        try:
-                            en_track = fut_en.result()
-                            if en_track is not None:
-                                subs.append(en_track)
-                            elif require_en:
-                                raise RuntimeError("EN subtitles are required but missing")
-                        except Exception as e:
-                            if require_en:
-                                raise
-                            error(f"{a.asset_id}: EN subtitle fallback failed (continuing): {e}")
-                        ru_tracks = fut_ru.result()
-                        subs.extend(ru_tracks)
+                # Normal mode with parallel execution.
+                # Keep ES pipeline single-threaded per episode for deterministic vtt->spa.srt behavior.
+                _task_video()
+                es_cues, _es_source, es_model_name = _task_es()
+                if episode_delay_ms is None:
+                    episode_delay_ms = 0 if subtitle_align != "off" else _episode_subtitle_delay_ms()
+                if subtitle_delay_mode == "auto" and subtitle_align == "off" and episode_delay_ms:
+                    es_cues = _shift_cues(es_cues, episode_delay_ms)
+                    srt_es.write_text(cues_to_srt(es_cues), encoding="utf-8")
+                es_cues, srt_es_out, es_title = _maybe_align_es(es_cues, es_model_name)
+                if policy.enabled("es"):
+                    subs.append(ProducedTrack(TRACK_ES, srt_es_out, "spa", es_title))
+                _ensure_mp4_consistent_with_es()
+                _ep_log(ep_tag, "translations")
+                with ThreadPoolExecutor(max_workers=2) as tr_pool:
+                    fut_ru = tr_pool.submit(_task_ru)
+                    fut_en = tr_pool.submit(_task_en)
+                    try:
+                        en_track = fut_en.result()
+                        if en_track is not None:
+                            subs.append(en_track)
+                        elif require_en:
+                            raise RuntimeError("EN subtitles are required but missing")
+                    except Exception as e:
+                        if require_en:
+                            raise
+                        error(f"{a.asset_id}: EN subtitle fallback failed (continuing): {e}")
+                    ru_tracks = fut_ru.result()
+                    subs.extend(ru_tracks)
             else:
                 # Normal mode without parallel execution
                 _task_video()
