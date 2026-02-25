@@ -221,6 +221,14 @@ By default rtve_dl produces 5 tracks:
 
 The player (like VLC) opens ru-refs subtitle track. You can change it by `--default-subtitle` option.
 
+Language tags in MKV metadata:
+- `es` track: `spa`
+- `en` track: `eng`
+- `ru` track: `rus`
+- mixed helper tracks use compatibility-oriented tags to avoid duplicate language IDs on TVs:
+  - `ru-refs`: `und`
+  - `ru-dual`: `mul`
+
 Disabling tracks in MKV:
 
 - `--sub <track>=<off|on|require>` (repeatable)

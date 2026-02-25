@@ -20,13 +20,13 @@ def track_file_specs(*, layout: TmpLayout, base: str, force_asr: bool, primary_m
     if force_asr:
         return {
             TRACK_RU_ASR: ProducedTrack(TRACK_RU_ASR, layout.srt_ru_asr_file(base), "rus", f"{primary_model} MT/ASR"),
-            TRACK_REFS_ASR: ProducedTrack(TRACK_REFS_ASR, layout.srt_refs_asr_file(base), "spa", "ES+RU refs/ASR"),
-            TRACK_RU_DUAL_ASR: ProducedTrack(TRACK_RU_DUAL_ASR, layout.srt_bi_full_asr_file(base), "rus", "ES+RU/ASR"),
+            TRACK_REFS_ASR: ProducedTrack(TRACK_REFS_ASR, layout.srt_refs_asr_file(base), "und", "ES+RU refs/ASR"),
+            TRACK_RU_DUAL_ASR: ProducedTrack(TRACK_RU_DUAL_ASR, layout.srt_bi_full_asr_file(base), "mul", "ES+RU/ASR"),
         }
     return {
         TRACK_RU: ProducedTrack(TRACK_RU, layout.srt_ru_file(base), "rus", f"{primary_model} MT"),
-        TRACK_REFS: ProducedTrack(TRACK_REFS, layout.srt_refs_file(base), "spa", "ES+RU refs"),
-        TRACK_RU_DUAL: ProducedTrack(TRACK_RU_DUAL, layout.srt_bi_full_file(base), "rus", "ES+RU"),
+        TRACK_REFS: ProducedTrack(TRACK_REFS, layout.srt_refs_file(base), "und", "ES+RU refs"),
+        TRACK_RU_DUAL: ProducedTrack(TRACK_RU_DUAL, layout.srt_bi_full_file(base), "mul", "ES+RU"),
     }
 
 
