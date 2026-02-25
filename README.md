@@ -184,6 +184,32 @@ Flags:
 
 Setup guide for Apple Silicon MPS: `docs/whisperx_mps_setup.md`.
 
+## HEVC Encoding (Optional)
+
+By default MKV mux keeps source video/audio bitstreams (`copy` mode).  
+To re-encode video to H.265/HEVC:
+
+```bash
+rtve_dl T8S1 --video-codec hevc
+```
+
+HEVC flags:
+- `--video-codec copy|hevc` (default: `copy`)
+- `--hevc-device cpu|gpu|auto` (default: `cpu`)
+- `--hevc-crf N` (default: `18`)
+- `--hevc-preset <x265 preset>` (default: `slow`)
+
+Recommended for quality-first compression:
+
+```bash
+rtve_dl T8S1 --video-codec hevc --hevc-device cpu --hevc-crf 18 --hevc-preset slow
+```
+
+Apple Silicon note:
+- `--hevc-device gpu` uses `hevc_videotoolbox`.
+- On some Apple Silicon setups this path can be inconsistent for size/quality tradeoff (for example, larger files than expected at similar visual quality).
+- If your goal is smaller files while preserving visual quality, prefer `--hevc-device cpu` (`libx265`).
+
 ## Subtitle tracks in resulting MKV
 
 By default rtve_dl produces 5 tracks:

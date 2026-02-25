@@ -181,6 +181,41 @@ def main(argv: list[str] | None = None) -> int:
         help="Enable parallel pipeline (video/subtitles/translation/mux). Default: enabled.",
     )
     parser.add_argument(
+        "--video-codec",
+        default="copy",
+        choices=["copy", "hevc"],
+        help="Video codec mode for MKV: copy (default) or hevc.",
+    )
+    parser.add_argument(
+        "--hevc-device",
+        default="cpu",
+        choices=["cpu", "gpu", "auto"],
+        help="HEVC encoder device strategy: cpu (default), gpu, or auto (gpu then cpu).",
+    )
+    parser.add_argument(
+        "--hevc-crf",
+        type=int,
+        default=18,
+        help="CRF for libx265 in HEVC mode. Lower is higher quality. Default: 18",
+    )
+    parser.add_argument(
+        "--hevc-preset",
+        default="slow",
+        choices=[
+            "ultrafast",
+            "superfast",
+            "veryfast",
+            "faster",
+            "fast",
+            "medium",
+            "slow",
+            "slower",
+            "veryslow",
+            "placebo",
+        ],
+        help="x265 preset for CPU path in HEVC mode. Default: slow",
+    )
+    parser.add_argument(
         "-j", "--jobs-episodes",
         type=int,
         default=2,
@@ -291,6 +326,10 @@ def main(argv: list[str] | None = None) -> int:
             subtitle_align_device=a.subtitle_align_device,
             subtitle_align_model=a.subtitle_align_model,
             parallel=a.parallel,
+            video_codec_mode=a.video_codec,
+            hevc_device=a.hevc_device,
+            hevc_crf=a.hevc_crf,
+            hevc_preset=a.hevc_preset,
             jobs_episodes=a.jobs_episodes,
             jobs_codex_chunks=a.jobs_codex_chunks,
             reset_layers=a.reset_layer,

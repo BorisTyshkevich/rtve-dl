@@ -433,6 +433,10 @@ def download_selector(
     subtitle_align_device: str = "auto",
     subtitle_align_model: str | None = None,
     parallel: bool = True,
+    video_codec_mode: str = "copy",
+    hevc_device: str = "cpu",
+    hevc_crf: int = 18,
+    hevc_preset: str = "slow",
     jobs_episodes: int = 2,
     jobs_codex_chunks: int = 4,
     reset_layers: list[str] | None = None,
@@ -467,6 +471,10 @@ def download_selector(
             "selector": selector,
             "series_slug": series_slug,
             "parallel": parallel,
+            "video_codec_mode": video_codec_mode,
+            "hevc_device": hevc_device,
+            "hevc_crf": hevc_crf,
+            "hevc_preset": hevc_preset,
             "translation_backend": translation_backend,
             "primary_model": primary_model,
             "sub_modes": sub_modes or [],
@@ -603,6 +611,10 @@ def download_selector(
                         subs=[(t.path, t.lang, t.title) for t in local_subs],
                         subtitle_delay_ms=episode_delay_ms,
                         default_subtitle_title=local_default_title,
+                        video_codec_mode=video_codec_mode,
+                        hevc_device=hevc_device,
+                        hevc_crf=hevc_crf,
+                        hevc_preset=hevc_preset,
                     )
                     tmp_out.replace(out_mkv)
                 _ep_log(ep_tag, f"done ({time.time() - t0:.1f}s)")
@@ -1248,6 +1260,10 @@ def download_selector(
                     subs=[(t.path, t.lang, t.title) for t in subs],
                     subtitle_delay_ms=episode_delay_ms,
                     default_subtitle_title=default_subtitle_title,
+                    video_codec_mode=video_codec_mode,
+                    hevc_device=hevc_device,
+                    hevc_crf=hevc_crf,
+                    hevc_preset=hevc_preset,
                 )
                 tmp_out.replace(out_mkv)
             _ep_log(ep_tag, f"done ({time.time() - t0:.1f}s)")

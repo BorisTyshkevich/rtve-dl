@@ -6,6 +6,8 @@ from pathlib import Path
 
 from rtve_dl.log import debug, is_debug
 
+_FFMPEG_ENCODERS_CACHE: str | None = None
+
 
 def require_ffmpeg() -> None:
     if shutil.which("ffmpeg") is None:
@@ -24,6 +26,32 @@ def run_ffmpeg(args: list[str]) -> None:
     p = subprocess.run([*base, *args], text=True)
     if p.returncode != 0:
         raise RuntimeError(f"ffmpeg failed: {' '.join(args)}")
+
+
+def _ffmpeg_encoders_text() -> str:
+    global _FFMPEG_ENCODERS_CACHE
+    if _FFMPEG_ENCODERS_CACHE is not None:
+        return _FFMPEG_ENCODERS_CACHE
+    require_ffmpeg()
+    p = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-encoders"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    if p.returncode != 0:
+        _FFMPEG_ENCODERS_CACHE = ""
+    else:
+        _FFMPEG_ENCODERS_CACHE = p.stdout or ""
+    return _FFMPEG_ENCODERS_CACHE
+
+
+def _pick_available_hevc_gpu_encoder() -> str | None:
+    enc = _ffmpeg_encoders_text()
+    for name in ("hevc_videotoolbox", "hevc_nvenc", "hevc_qsv", "hevc_amf", "hevc_vaapi"):
+        if name in enc:
+            return name
+    return None
 
 
 def probe_duration_seconds(path: Path) -> float | None:
@@ -142,6 +170,10 @@ def mux_mkv(
     subs: list[tuple[Path, str, str]],
     subtitle_delay_ms: int = 0,
     default_subtitle_title: str | None = None,
+    video_codec_mode: str = "copy",
+    hevc_device: str = "cpu",
+    hevc_crf: int = 18,
+    hevc_preset: str = "slow",
 ) -> None:
     """
     subs: list of (path, language, title). Codec will be SRT-in-MKV.
@@ -163,9 +195,6 @@ def mux_mkv(
     for i in range(1, 1 + len(subs)):
         args += ["-map", str(i)]
 
-    # Copy primary A/V streams, re-encode subtitle inputs as SRT-in-MKV.
-    args += ["-c:v", "copy", "-c:a", "copy", "-c:s", "srt"]
-
     default_idx: int | None = None
     if default_subtitle_title:
         default_idx = next(
@@ -173,20 +202,74 @@ def mux_mkv(
             None,
         )
 
-    # Attach metadata per subtitle stream.
-    for idx, (_p, lang, title) in enumerate(subs):
-        args += [f"-metadata:s:s:{idx}", f"language={lang}"]
-        args += [f"-metadata:s:s:{idx}", f"title={title}"]
-        # Start with no default subtitle flags; selected default stream is set below.
-        if default_idx != idx:
-            args += [f"-disposition:s:{idx}", "0"]
-
     if default_subtitle_title:
         if default_idx is None:
             debug(f"mux_mkv: default subtitle title not found: {default_subtitle_title!r}")
         else:
-            args += [f"-disposition:s:{default_idx}", "default"]
             debug(f"mux_mkv: default subtitle index selected: {default_idx}")
 
-    args += [str(out_mkv)]
-    run_ffmpeg(args)
+    meta_args: list[str] = []
+    for idx, (_p, lang, title) in enumerate(subs):
+        meta_args += [f"-metadata:s:s:{idx}", f"language={lang}"]
+        meta_args += [f"-metadata:s:s:{idx}", f"title={title}"]
+        if default_idx != idx:
+            meta_args += [f"-disposition:s:{idx}", "0"]
+    if default_idx is not None:
+        meta_args += [f"-disposition:s:{default_idx}", "default"]
+
+    if video_codec_mode == "copy":
+        # Default behavior: keep original video/audio bitstreams.
+        run_ffmpeg([*args, "-c:v", "copy", "-c:a", "copy", "-c:s", "srt", *meta_args, str(out_mkv)])
+        return
+
+    if video_codec_mode != "hevc":
+        raise RuntimeError(f"unsupported video codec mode: {video_codec_mode}")
+
+    if hevc_device not in {"cpu", "gpu", "auto"}:
+        raise RuntimeError(f"unsupported HEVC device mode: {hevc_device}")
+
+    def _run_cpu_x265() -> None:
+        run_ffmpeg(
+            [
+                *args,
+                "-c:v",
+                "libx265",
+                "-crf",
+                str(hevc_crf),
+                "-preset",
+                hevc_preset,
+                "-c:a",
+                "copy",
+                "-c:s",
+                "srt",
+                *meta_args,
+                str(out_mkv),
+            ]
+        )
+
+    if hevc_device == "cpu":
+        debug("mux_mkv: HEVC CPU mode (libx265)")
+        _run_cpu_x265()
+        return
+
+    gpu_encoder = _pick_available_hevc_gpu_encoder()
+    if gpu_encoder:
+        debug(f"mux_mkv: trying HEVC GPU encoder: {gpu_encoder}")
+        try:
+            run_ffmpeg([*args, "-c:v", gpu_encoder, "-c:a", "copy", "-c:s", "srt", *meta_args, str(out_mkv)])
+            return
+        except Exception as e:  # noqa: BLE001 - keep fallback resilient
+            debug(f"mux_mkv: HEVC GPU encode failed ({gpu_encoder}), falling back to libx265: {e}")
+    elif hevc_device == "gpu":
+        debug("mux_mkv: no GPU HEVC encoder found in gpu mode, using libx265 fallback")
+    else:
+        debug("mux_mkv: no GPU HEVC encoder found in auto mode, using libx265 fallback")
+
+    try:
+        _run_cpu_x265()
+    except Exception as cpu_err:  # noqa: BLE001 - include both attempts in error
+        if gpu_encoder:
+            raise RuntimeError(
+                f"HEVC mux failed for GPU encoder {gpu_encoder} and CPU libx265"
+            ) from cpu_err
+        raise RuntimeError("HEVC mux failed with CPU libx265") from cpu_err
