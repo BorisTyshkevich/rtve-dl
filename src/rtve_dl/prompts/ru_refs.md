@@ -13,14 +13,13 @@ Rules:
 - Annotate only difficult B1/B2/C1/C2 terms or phrases.
 - Do not annotate obvious A1/A2 words.
 - do not provide letter-to-letter transcriptions - `mira (мира)`.
-- Use only the current cue text (second column). Do not use neighboring cues.
+- Use only the current cue text (second column).
 - Copy the echo column exactly as provided in input.
+- If the current cue contains `\n`, preserve it as the literal two characters `\n` in the output TSV. Do not emit physical line breaks inside a TSV row.
 - Input TSV columns:
   - col1: id
   - col2: current Spanish cue text
-  - col3: previous cue text (context)
-  - col4: next cue text (context)
-  - col5: echo (must be copied verbatim)
+  - col3: echo (must be copied verbatim)
 - Insert Russian gloss immediately after the Spanish term/phrase in brackets:
   - `libertad (свобода)`
   - `justicia por nuestras manos (брать правосудие в свои руки)`

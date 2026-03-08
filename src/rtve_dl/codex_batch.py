@@ -193,23 +193,36 @@ def _parse_tsv_with_echo(
     expected: dict[str, tuple[str, str]],
 ) -> dict[str, str]:
     out: dict[str, str] = {}
+    pending = ""
+
+    def flush_row(row: str) -> bool:
+        parts = row.split("\t")
+        if len(parts) < 3:
+            return False
+        model_id = _tsv_unescape(parts[0]).strip()
+        echo = _tsv_unescape(parts[-1]).strip()
+        text = _tsv_unescape("\t".join(parts[1:-1])).strip()
+        expected_row = expected.get(model_id)
+        if not expected_row:
+            return False
+        _cue_id, expected_echo = expected_row
+        if echo != expected_echo:
+            # Claude occasionally duplicates the model id into the echo column.
+            # The id is already a stable row anchor, so salvage that specific case.
+            if echo != model_id:
+                return False
+        out[model_id] = text
+        return True
+
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         row = line.rstrip("\r")
         if not row.strip():
             continue
-        parts = row.split("\t")
-        if len(parts) < 3:
+        candidate = row if not pending else pending + "\n" + row
+        if flush_row(candidate):
+            pending = ""
             continue
-        model_id = _tsv_unescape(parts[0]).strip()
-        echo = _tsv_unescape(parts[-1]).strip()
-        text = _tsv_unescape(parts[1]).strip()
-        expected_row = expected.get(model_id)
-        if not expected_row:
-            continue
-        _cue_id, expected_echo = expected_row
-        if echo != expected_echo:
-            continue
-        out[model_id] = text
+        pending = candidate
     return out
 
 
@@ -233,6 +246,36 @@ def _write_jsonl_map(path: Path, mapping: dict[str, str]) -> None:
     with path.open("w", encoding="utf-8") as f:
         for cue_id, text in mapping.items():
             f.write(json.dumps({"id": cue_id, "text": text}, ensure_ascii=False) + "\n")
+
+
+def _recover_chunk_jsonl_from_tsv(chunk: CodexChunkPaths) -> bool:
+    if not chunk.out_tsv.exists() or chunk.out_tsv.stat().st_size == 0:
+        return False
+    expected = _build_expected_map(
+        [
+            (str(obj.get("id", "")), obj.get("text", ""))
+            for obj in (
+                json.loads(line)
+                for line in chunk.in_jsonl.read_text(encoding="utf-8", errors="replace").splitlines()
+                if line.strip()
+            )
+            if isinstance(obj, dict) and isinstance(obj.get("text"), str)
+        ]
+    )
+    parsed = _parse_tsv_with_echo(chunk.out_tsv, expected=expected)
+    if not parsed:
+        return False
+    remapped: dict[str, str] = {}
+    for model_id, text in parsed.items():
+        expected_row = expected.get(model_id)
+        if not expected_row:
+            continue
+        cue_id, _echo = expected_row
+        remapped[cue_id] = text
+    if not remapped:
+        return False
+    _write_jsonl_map(chunk.out_jsonl, remapped)
+    return True
 
 
 def _write_nochunk_cache(path: Path, mapping: dict[str, str]) -> None:
@@ -633,6 +676,9 @@ def _translate_es_chunked(
     for ch in chunks:
         if resume and ch.out_jsonl.exists() and ch.out_jsonl.stat().st_size > 0:
             continue
+        if resume and _recover_chunk_jsonl_from_tsv(ch):
+            debug(f"{backend}:{target_language.lower()}: recovered chunk output from TSV: {ch.out_jsonl.name}")
+            continue
         pending.append(ch)
     _run_codex_chunks(
         chunks=pending,
@@ -648,6 +694,8 @@ def _translate_es_chunked(
 
     merged: dict[str, str] = {}
     for ch in chunks:
+        if not ch.out_jsonl.exists() and _recover_chunk_jsonl_from_tsv(ch):
+            debug(f"{backend}:{target_language.lower()}: regenerated missing JSONL from TSV: {ch.out_jsonl.name}")
         if not ch.out_jsonl.exists():
             raise RuntimeError(f"missing {backend} output chunk: {ch.out_jsonl}")
         merged.update(_parse_jsonl_map(ch.out_jsonl))
@@ -685,6 +733,10 @@ def _translate_es_chunked(
                 prompt_context=prompt_context,
             )
             for ch in retry_chunks:
+                if not ch.out_jsonl.exists() and _recover_chunk_jsonl_from_tsv(ch):
+                    debug(
+                        f"{backend}:{target_language.lower()}: regenerated retry JSONL from TSV: {ch.out_jsonl.name}"
+                    )
                 merged.update(_parse_jsonl_map(ch.out_jsonl))
             missing = sorted(list(want - set(merged.keys())))
             attempt += 1
