@@ -27,6 +27,8 @@ def _resolve_model_flag(a: argparse.Namespace) -> None:
     if a.model:
         if a.translation_backend == "claude":
             a.claude_model = a.model
+        elif a.translation_backend == "gemini":
+            a.gemini_model = a.model
         else:
             a.codex_model = a.model
 
@@ -136,8 +138,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--translation-backend",
         default="claude",
-        choices=["claude", "codex"],
-        help="Translation backend: claude (default) or codex",
+        choices=["claude", "codex", "gemini"],
+        help="Translation backend: claude (default), codex, or gemini",
     )
     parser.add_argument(
         "--claude-model",
@@ -150,9 +152,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Codex model for batch translation when using codex backend (default: gpt-5.1-codex-mini)",
     )
     parser.add_argument(
+        "--gemini-model",
+        default=None,
+        help="Gemini model for batch translation when using gemini backend (default: Gemini CLI default)",
+    )
+    parser.add_argument(
         "-m", "--model",
         default=None,
-        help="Translation model (auto-routes to --claude-model or --codex-model based on backend)",
+        help="Translation model (auto-routes to --claude-model, --codex-model, or --gemini-model based on backend)",
     )
     parser.add_argument(
         "--codex-chunk-cues",
@@ -243,6 +250,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Max absolute subtitle delay considered by auto mode. Default: 15000",
     )
     parser.add_argument(
+        "--save-auto-delay-asr-dir",
+        default=None,
+        help="Optional directory to save ASR SRT transcripts used by subtitle auto-delay.",
+    )
+    parser.add_argument(
         "--subtitle-align",
         default="off",
         choices=["off", "whisperx"],
@@ -317,11 +329,13 @@ def main(argv: list[str] | None = None) -> int:
             translation_backend=a.translation_backend,
             claude_model=a.claude_model,
             codex_model=a.codex_model,
+            gemini_model=a.gemini_model,
             codex_chunk_cues=a.codex_chunk_cues,
             no_chunk=no_chunk,
             subtitle_delay_ms=subtitle_delay_ms,
             subtitle_delay_mode=subtitle_delay_mode,
             subtitle_delay_auto_max_ms=a.subtitle_delay_auto_max_ms,
+            save_auto_delay_asr_dir=a.save_auto_delay_asr_dir,
             subtitle_align=a.subtitle_align,
             subtitle_align_device=a.subtitle_align_device,
             subtitle_align_model=a.subtitle_align_model,

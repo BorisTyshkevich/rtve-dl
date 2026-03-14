@@ -136,6 +136,32 @@ def _remove_if_empty(path: Path, *, kind: str) -> None:
         pass
 
 
+_EN_SOURCE_RTVE = "rtve"
+_EN_SOURCE_MT = "mt"
+
+
+def _read_en_source(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        value = path.read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        return None
+    if value in {_EN_SOURCE_RTVE, _EN_SOURCE_MT}:
+        return value
+    return None
+
+
+def _write_en_source(path: Path, source: str) -> None:
+    path.write_text(source + "\n", encoding="utf-8")
+
+
+def _english_track_title(*, source: str | None, primary_model: str) -> str:
+    if source == _EN_SOURCE_RTVE:
+        return "RTVE"
+    return f"{primary_model} MT"
+
+
 _RESET_LAYER_ALLOWED = {
     "subs-es",
     "subs-en",
@@ -253,6 +279,7 @@ def _reset_selector_layers(*, paths: SeriesPaths, assets: list[SeriesAsset], lay
 
         if "subs-en" in layers:
             _safe_unlink_glob(paths.layout.srt, f"{prefix}*.eng.srt", reason="subs-en")
+            _safe_unlink_glob(paths.layout.srt, f"{prefix}*.eng.source", reason="subs-en")
             _safe_unlink_glob(paths.layout.srt, f"{prefix}*.eng.asr.srt", reason="subs-en")
             _safe_unlink(paths.layout.vtt_en_file(asset_id), reason="subs-en")
             _safe_unlink_glob(paths.layout.codex_en, f"{prefix}*.en*", reason="subs-en")
@@ -298,6 +325,7 @@ def _collect_local_subs_for_mux(
     srt_es = paths.layout.srt_es_file(base)
     srt_es_aligned = paths.layout.srt_es_aligned_file(base)
     srt_en = paths.layout.srt_en_file(base)
+    srt_en_source = paths.layout.srt_en_source_file(base)
     _remove_if_empty(srt_es, kind="srt")
     _remove_if_empty(srt_es_aligned, kind="srt")
     _remove_if_empty(srt_en, kind="srt")
@@ -339,7 +367,14 @@ def _collect_local_subs_for_mux(
             subs.append(ProducedTrack(TRACK_ES, srt_es, "spa", es_model_name))
         # RTVE EN if available
         if include_en and _is_nonempty_file(srt_en):
-            subs.append(ProducedTrack(TRACK_EN, srt_en, "eng", "RTVE"))
+            subs.append(
+                ProducedTrack(
+                    TRACK_EN,
+                    srt_en,
+                    "eng",
+                    _english_track_title(source=_read_en_source(srt_en_source), primary_model=primary_model),
+                )
+            )
         if include_es:
             subs.append(ProducedTrack(TRACK_ES_ASR, srt_es_asr, "spa", "ASR"))
         if include_en:
@@ -366,7 +401,14 @@ def _collect_local_subs_for_mux(
     if include_en:
         if not _is_nonempty_file(srt_en):
             return None
-        subs.append(ProducedTrack(TRACK_EN, srt_en, "eng", f"{primary_model} MT"))
+        subs.append(
+            ProducedTrack(
+                TRACK_EN,
+                srt_en,
+                "eng",
+                _english_track_title(source=_read_en_source(srt_en_source), primary_model=primary_model),
+            )
+        )
     for track_id in (
         "ru",
         "refs",
@@ -424,11 +466,13 @@ def download_selector(
     translation_backend: str = "claude",
     claude_model: str | None = None,
     codex_model: str | None = None,
+    gemini_model: str | None = None,
     codex_chunk_cues: int = 500,
     no_chunk: bool | None = None,
     subtitle_delay_ms: int = DEFAULT_SUBTITLE_DELAY_MS,
     subtitle_delay_mode: str = "auto",
     subtitle_delay_auto_max_ms: int = 15000,
+    save_auto_delay_asr_dir: str | None = None,
     subtitle_align: str = "off",
     subtitle_align_device: str = "auto",
     subtitle_align_model: str | None = None,
@@ -455,12 +499,22 @@ def download_selector(
     if translation_backend == "claude":
         primary_model = claude_model or "sonnet"
         fallback_model = "opus" if primary_model in ("sonnet", "claude-sonnet-4-20250514") else None
-    else:
+    elif translation_backend == "codex":
         primary_model = codex_model or "gpt-5.1-codex-mini"
         fallback_model = "gpt-5.3-codex" if primary_model == "gpt-5.1-codex-mini" else None
+    elif translation_backend == "gemini":
+        primary_model = gemini_model
+        fallback_model = None
+    else:
+        raise RuntimeError(f"unsupported translation backend: {translation_backend}")
 
     # For ES cleanup, use same backend but potentially different model
-    es_clean_default_model = "sonnet" if translation_backend == "claude" else "gpt-5.1-codex-mini"
+    if translation_backend == "claude":
+        es_clean_default_model = "sonnet"
+    elif translation_backend == "codex":
+        es_clean_default_model = "gpt-5.1-codex-mini"
+    else:
+        es_clean_default_model = None
     global_cache: GlobalPhraseCache = load_global_phrase_cache(Path("data") / "global_phrase_cache.json")
     telemetry = TelemetryDB(paths.layout.telemetry_db())
     run_id = telemetry.start_run(
@@ -500,6 +554,7 @@ def download_selector(
     else:
         debug(f"subtitle delay selected: {effective_subtitle_delay_ms}ms (mode=manual)")
     align_base_delay_ms = effective_subtitle_delay_ms
+    auto_delay_asr_dir = Path(save_auto_delay_asr_dir) if save_auto_delay_asr_dir else None
     if subtitle_align != "off":
         if align_base_delay_ms:
             debug(f"subtitle align pre-shift: {align_base_delay_ms}ms (will zero mux delay)")
@@ -557,6 +612,7 @@ def download_selector(
                         asr_batch_size=asr_batch_size,
                         asr_vad_method=asr_vad_method,
                         asr_mlx_model=asr_mlx_model,
+                        save_asr_srt_dir=auto_delay_asr_dir,
                     )
                 debug(f"subtitle delay computed (episode): {delay_ms}ms")
                 return delay_ms
@@ -829,6 +885,7 @@ def download_selector(
                             asr_batch_size=asr_batch_size,
                             asr_vad_method=asr_vad_method,
                             asr_mlx_model=asr_mlx_model,
+                            save_asr_srt_dir=auto_delay_asr_dir,
                         )
                     debug(f"subtitle delay computed (episode): {align_pre_shift_ms}ms")
                     debug(f"subtitle align pre-shift (episode): {align_pre_shift_ms}ms")
@@ -1035,11 +1092,13 @@ def download_selector(
                         en_vtt = paths.layout.vtt_en_file(a.asset_id)
                         en_cues = parse_vtt(en_vtt.read_text(encoding="utf-8"))
                         srt_en = paths.layout.srt_en_file(base)
+                        srt_en_source = paths.layout.srt_en_source_file(base)
                         _remove_if_empty(srt_en, kind="srt")
-                        if not _is_nonempty_file(srt_en):
+                        if (not _is_nonempty_file(srt_en)) or (_read_en_source(srt_en_source) != _EN_SOURCE_RTVE):
                             if subtitle_delay_mode == "auto" and episode_delay_ms:
                                 en_cues = _shift_cues(en_cues, episode_delay_ms)
                             srt_en.write_text(cues_to_srt(en_cues), encoding="utf-8")
+                            _write_en_source(srt_en_source, _EN_SOURCE_RTVE)
                         else:
                             debug(f"cache hit srt: {srt_en}")
                         return ProducedTrack(TRACK_EN, srt_en, "eng", "RTVE")
@@ -1050,8 +1109,9 @@ def download_selector(
                 # Fallback: machine-translate ES -> EN using translation backend chunks.
                 with stage(f"build:srt:en_mt:{a.asset_id}"):
                     srt_en = paths.layout.srt_en_file(base)
+                    srt_en_source = paths.layout.srt_en_source_file(base)
                     _remove_if_empty(srt_en, kind="srt")
-                    if not _is_nonempty_file(srt_en):
+                    if (not _is_nonempty_file(srt_en)) or (_read_en_source(srt_en_source) != _EN_SOURCE_MT):
                         cue_tasks = [(f"{i}", (c.text or "").strip()) for i, c in enumerate(es_cues) if (c.text or "").strip()]
                         en_cached, en_missing = global_cache.split_for_track(cues=cue_tasks, track="en_mt")
                         base_path = paths.layout.codex_base(base, "en")
@@ -1085,6 +1145,7 @@ def download_selector(
                             for i, c in enumerate(es_cues)
                         ]
                         srt_en.write_text(cues_to_srt(en_cues), encoding="utf-8")
+                        _write_en_source(srt_en_source, _EN_SOURCE_MT)
                     else:
                         debug(f"cache hit srt: {srt_en}")
                     return ProducedTrack(TRACK_EN, srt_en, "eng", f"{primary_model} MT")
@@ -1137,9 +1198,11 @@ def download_selector(
                         en_vtt = paths.layout.vtt_en_file(a.asset_id)
                         en_cues = parse_vtt(en_vtt.read_text(encoding="utf-8"))
                         srt_en_rtve = paths.layout.srt_en_file(base)
+                        srt_en_source = paths.layout.srt_en_source_file(base)
                         _remove_if_empty(srt_en_rtve, kind="srt")
-                        if not _is_nonempty_file(srt_en_rtve):
+                        if (not _is_nonempty_file(srt_en_rtve)) or (_read_en_source(srt_en_source) != _EN_SOURCE_RTVE):
                             srt_en_rtve.write_text(cues_to_srt(en_cues), encoding="utf-8")
+                            _write_en_source(srt_en_source, _EN_SOURCE_RTVE)
                         else:
                             debug(f"cache hit srt: {srt_en_rtve}")
                         subs.append(ProducedTrack(TRACK_EN, srt_en_rtve, "eng", "RTVE"))
@@ -1149,7 +1212,17 @@ def download_selector(
 
                 # Only include cached EN MT if not already added as RTVE EN
                 if policy.enabled("en") and (not resolved.subtitles_en_vtt) and _is_nonempty_file(srt_en):
-                    subs.append(ProducedTrack(TRACK_EN, srt_en, "eng", f"{primary_model} MT"))
+                    subs.append(
+                        ProducedTrack(
+                            TRACK_EN,
+                            srt_en,
+                            "eng",
+                            _english_track_title(
+                                source=_read_en_source(paths.layout.srt_en_source_file(base)),
+                                primary_model=primary_model,
+                            ),
+                        )
+                    )
                 ru_cached_map = local_track_file_map(
                     layout=paths.layout,
                     base=base,

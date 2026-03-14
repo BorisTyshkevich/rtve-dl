@@ -87,6 +87,7 @@ class CollectLocalSubsTests(unittest.TestCase):
             base = "S01E01_test"
             _write_srt(paths.layout.srt_es_file(base))
             _write_srt(paths.layout.srt_en_file(base))
+            paths.layout.srt_en_source_file(base).write_text("mt\n", encoding="utf-8")
             _write_srt(paths.layout.srt_ru_file(base))
             _write_srt(paths.layout.srt_bi_full_file(base))
             policy = parse_track_policy(["ru=on", "refs=off", "ru-dual=on", "en=on", "es=on"])
@@ -103,6 +104,51 @@ class CollectLocalSubsTests(unittest.TestCase):
             subs, default_title = result
             self.assertEqual(default_title, "ES+RU")
             self.assertFalse(any(t.id == "refs" for t in subs))
+        finally:
+            root.cleanup()
+
+    def test_collect_subs_uses_rtve_title_when_en_source_is_rtve(self) -> None:
+        paths, root = self._paths()
+        try:
+            base = "S01E01_test"
+            _write_srt(paths.layout.srt_es_file(base))
+            _write_srt(paths.layout.srt_en_file(base))
+            paths.layout.srt_en_source_file(base).write_text("rtve\n", encoding="utf-8")
+            result = _collect_local_subs_for_mux(
+                base=base,
+                paths=paths,
+                policy=parse_track_policy(["es=on", "en=on", "ru=off", "ru-dual=off", "refs=off"]),
+                enabled_ru_tracks=set(),
+                default_subtitle="en",
+                subtitle_align="off",
+            )
+            self.assertIsNotNone(result)
+            subs, default_title = result
+            self.assertEqual(default_title, "RTVE")
+            self.assertEqual(subs[1].title, "RTVE")
+        finally:
+            root.cleanup()
+
+    def test_collect_subs_uses_mt_title_when_en_source_is_mt(self) -> None:
+        paths, root = self._paths()
+        try:
+            base = "S01E01_test"
+            _write_srt(paths.layout.srt_es_file(base))
+            _write_srt(paths.layout.srt_en_file(base))
+            paths.layout.srt_en_source_file(base).write_text("mt\n", encoding="utf-8")
+            result = _collect_local_subs_for_mux(
+                base=base,
+                paths=paths,
+                policy=parse_track_policy(["es=on", "en=on", "ru=off", "ru-dual=off", "refs=off"]),
+                enabled_ru_tracks=set(),
+                default_subtitle="en",
+                subtitle_align="off",
+                primary_model="sonnet",
+            )
+            self.assertIsNotNone(result)
+            subs, default_title = result
+            self.assertEqual(default_title, "sonnet MT")
+            self.assertEqual(subs[1].title, "sonnet MT")
         finally:
             root.cleanup()
 

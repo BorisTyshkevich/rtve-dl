@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -63,9 +64,50 @@ def _ensure_claude_on_path() -> None:
         raise RuntimeError("claude CLI not found on PATH")
 
 
+def _ensure_gemini_on_path() -> None:
+    if shutil.which("gemini") is None:
+        raise RuntimeError("gemini CLI not found on PATH")
+
+
 def _resolve_claude_model(model: str | None) -> str:
     """Pass through model name to Claude CLI (accepts aliases like 'sonnet', 'opus')."""
     return model or "sonnet"
+
+
+def _build_backend_command(
+    *,
+    backend: str,
+    model: str | None,
+    out_tsv: Path,
+) -> tuple[list[str], bool]:
+    if backend == "claude":
+        _ensure_claude_on_path()
+        resolved_model = _resolve_claude_model(model)
+        # --setting-sources user: skip project context (CLAUDE.md) to avoid Claude acting as code assistant
+        cmd = ["claude", "-p", "--print", "--model", resolved_model, "--setting-sources", "user"]
+        return cmd, True
+    if backend == "codex":
+        _ensure_codex_on_path()
+        cmd = ["codex", "exec", "-s", "read-only", "--output-last-message", str(out_tsv)]
+        if model:
+            cmd += ["-m", model]
+        cmd.append("-")
+        return cmd, False
+    if backend == "gemini":
+        _ensure_gemini_on_path()
+        cmd = [
+            "gemini",
+            "-p",
+            "",
+            "--output-format",
+            "text",
+            "--allowed-mcp-server-names",
+            "",
+        ]
+        if model:
+            cmd += ["--model", model]
+        return cmd, True
+    raise RuntimeError(f"unsupported translation backend: {backend}")
 
 
 def _load_prompt_template(prompt_mode: str) -> str:
@@ -423,28 +465,15 @@ def run_codex_chunk(
 ) -> None:
     payload = chunk.in_tsv.read_text(encoding="utf-8")
     prompt = _build_prompt(tsv_payload=payload, prompt_mode=prompt_mode, prompt_context=prompt_context)
-
-    if backend == "claude":
-        _ensure_claude_on_path()
-        resolved_model = _resolve_claude_model(model)
-        # --setting-sources user: skip project context (CLAUDE.md) to avoid Claude acting as code assistant
-        cmd = ["claude", "-p", "--print", "--model", resolved_model, "--setting-sources", "user"]
-        debug("claude: " + " ".join(cmd))
-    else:
-        _ensure_codex_on_path()
-        cmd = ["codex", "exec", "-s", "read-only", "--output-last-message", str(chunk.out_tsv)]
-        if model:
-            cmd += ["-m", model]
-        cmd.append("-")
-        debug("codex exec: " + " ".join(cmd))
+    cmd, writes_stdout_to_tsv = _build_backend_command(backend=backend, model=model, out_tsv=chunk.out_tsv)
+    debug(f"{backend}: " + " ".join(cmd))
 
     with stage(f"{backend}:{target_language.lower()}:chunk:{chunk.out_jsonl.name}"):
         started_at = _now_iso()
         t0 = time.time()
         res = subprocess.run(cmd, input=prompt, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
-        # For Claude backend, write stdout to out_tsv (codex writes directly via --output-last-message)
-        if backend == "claude" and res.returncode == 0:
+        if writes_stdout_to_tsv and res.returncode == 0:
             chunk.out_tsv.write_text(res.stdout or "", encoding="utf-8")
 
         total_tokens = _parse_total_tokens(res.stdout or "")
@@ -489,7 +518,7 @@ def run_codex_chunk(
                     raise RuntimeError(
                         f"claude failed due to auth error. Check ANTHROPIC_API_KEY. Details: {log_path}"
                     )
-            else:
+            elif backend == "codex":
                 if (
                     "401 unauthorized" in out
                     or "provided authentication token is expired" in out
@@ -500,6 +529,10 @@ def run_codex_chunk(
                         "Run `codex logout` then `codex login --device-auth` (or `printenv OPENAI_API_KEY | codex login --with-api-key`) "
                         f"and retry. Details: {log_path}"
                     )
+            elif "unauthorized" in out or "authentication" in out or "api key" in out:
+                raise RuntimeError(
+                    f"gemini failed due to auth error. Check Gemini CLI authentication. Details: {log_path}"
+                )
             if "429" in out or "rate limit" in out or "too many requests" in out:
                 raise RuntimeError(f"{backend} rate limited; see {log_path}")
             raise RuntimeError(f"{backend} failed (exit {res.returncode}); see {log_path}")
@@ -823,27 +856,15 @@ def _translate_no_chunk(
         # Output file for raw TSV response
         out_tsv = Path(str(base_path) + f".{io_tag}.nochunk.out.tsv")
 
-        if backend == "claude":
-            _ensure_claude_on_path()
-            resolved_model = _resolve_claude_model(model)
-            # --setting-sources user: skip project context (CLAUDE.md) to avoid Claude acting as code assistant
-            cmd = ["claude", "-p", "--print", "--model", resolved_model, "--setting-sources", "user"]
-            debug("claude (no-chunk): " + " ".join(cmd))
-        else:
-            _ensure_codex_on_path()
-            cmd = ["codex", "exec", "-s", "read-only", "--output-last-message", str(out_tsv)]
-            if model:
-                cmd += ["-m", model]
-            cmd.append("-")
-            debug("codex exec (no-chunk): " + " ".join(cmd))
+        cmd, writes_stdout_to_tsv = _build_backend_command(backend=backend, model=model, out_tsv=out_tsv)
+        debug(f"{backend} (no-chunk): " + " ".join(cmd))
 
         with stage(f"{backend}:{target_language.lower()}:nochunk:{len(cues)} cues"):
             started_at = _now_iso()
             t0 = time.time()
             res = subprocess.run(cmd, input=prompt, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
-            # For Claude backend, write stdout to out_tsv
-            if backend == "claude" and res.returncode == 0:
+            if writes_stdout_to_tsv and res.returncode == 0:
                 out_tsv.write_text(res.stdout or "", encoding="utf-8")
 
             total_tokens = _parse_total_tokens(res.stdout or "")
@@ -862,7 +883,7 @@ def _translate_no_chunk(
                         raise RuntimeError(
                             f"claude failed due to auth error. Check ANTHROPIC_API_KEY. Details: {log_path}"
                         )
-                else:
+                elif backend == "codex":
                     if (
                         "401 unauthorized" in out
                         or "provided authentication token is expired" in out
@@ -873,6 +894,10 @@ def _translate_no_chunk(
                             "Run `codex logout` then `codex login --device-auth` and retry. "
                             f"Details: {log_path}"
                         )
+                elif "unauthorized" in out or "authentication" in out or "api key" in out:
+                    raise RuntimeError(
+                        f"gemini failed due to auth error. Check Gemini CLI authentication. Details: {log_path}"
+                    )
                 if "429" in out or "rate limit" in out or "too many requests" in out:
                     raise RuntimeError(f"{backend} rate limited; see {log_path}")
                 raise RuntimeError(f"{backend} failed (exit {res.returncode}); see {log_path}")
@@ -1046,10 +1071,10 @@ def translate_es(
 
     Dispatches to no-chunk or chunked mode based on backend and flags:
     - no_chunk=True: Single request with full context (default for Claude)
-    - no_chunk=False: Chunked parallel batches (default for Codex)
+    - no_chunk=False: Chunked parallel batches (default for Codex/Gemini)
     - no_chunk=None: Auto-select based on backend
     """
-    # Default: no_chunk=True for claude, False for codex
+    # Default: no_chunk=True for claude, False for codex/gemini
     if no_chunk is None:
         no_chunk = (backend == "claude")
 

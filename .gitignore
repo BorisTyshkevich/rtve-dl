@@ -16,3 +16,5 @@ data/
 tmp/
 .codex/
 .claude/
+rust/target/
+models/*.bin

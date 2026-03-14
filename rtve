@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TRANSLATION_BACKEND="gemini"
+HAS_TRANSLATION_BACKEND=0
+ARGS=("$@")
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "error: cargo not found on PATH" >&2
+  exit 1
+fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --translation-backend)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --translation-backend requires a value" >&2
+        exit 1
+      fi
+      TRANSLATION_BACKEND="$2"
+      HAS_TRANSLATION_BACKEND=1
+      shift 2
+      ;;
+    --translation-backend=*)
+      TRANSLATION_BACKEND="${1#*=}"
+      HAS_TRANSLATION_BACKEND=1
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+case "$TRANSLATION_BACKEND" in
+  claude|codex|gemini)
+    if ! command -v "$TRANSLATION_BACKEND" >/dev/null 2>&1; then
+      echo "error: $TRANSLATION_BACKEND not found on PATH" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+if [[ $HAS_TRANSLATION_BACKEND -eq 0 ]]; then
+  ARGS=(--translation-backend "$TRANSLATION_BACKEND" "${ARGS[@]}")
+fi
+
+exec cargo run --manifest-path "$ROOT_DIR/rust/Cargo.toml" --bin rtve -- "${ARGS[@]}" \
+  2> >(grep -vE '^$|^(warning: function `.*` is never used|warning: fields `.*` are never read|warning: `rtve-dl-rust` \(bin "rtve".*\) generated [0-9]+ warnings?$|[[:space:]]*--> src/.*|[[:space:]]*[0-9]+ \|.*|[[:space:]]*\|.*|[[:space:]]*= note:.*|[[:space:]]*\.\.\..*)$' >&2)

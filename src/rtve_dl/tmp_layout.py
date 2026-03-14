@@ -73,6 +73,9 @@ class TmpLayout:
     def srt_en_file(self, base: str) -> Path:
         return self.srt / f"{base}.eng.srt"
 
+    def srt_en_source_file(self, base: str) -> Path:
+        return self.srt / f"{base}.eng.source"
+
     def srt_ru_file(self, base: str) -> Path:
         return self.srt / f"{base}.rus.srt"
 

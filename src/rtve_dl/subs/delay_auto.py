@@ -23,8 +23,12 @@ _NORM_RE = re.compile(r"[^a-z0-9а-яёñáéíóúü]+", re.IGNORECASE)
 AUTO_DELAY_ASR_SEGMENT_S = 300
 ASR_MATCH_SIM_MIN = 0.66
 ASR_MIN_MATCHES = 12
+ASR_SHORT_TEXT_CHARS = 8
+ASR_SHORT_TEXT_STRONG_SIM_MIN = 0.88
+ASR_DELAY_CLUSTER_MS = 350
 ENERGY_PCTL = 0.55
 ENERGY_FLOOR = 400
+AUTO_DELAY_PRIMARY_START_S = 60.0
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,44 @@ def _norm_text(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+def _text_char_len(s: str) -> int:
+    return len(s.replace(" ", ""))
+
+
+def _weighted_median(samples: list[tuple[int, float]]) -> int:
+    ordered = sorted(samples, key=lambda item: item[0])
+    total = sum(weight for _, weight in ordered)
+    if total <= 0:
+        return ordered[len(ordered) // 2][0]
+    threshold = total / 2.0
+    running = 0.0
+    for value, weight in ordered:
+        running += weight
+        if running >= threshold:
+            return value
+    return ordered[-1][0]
+
+
+def _select_delay_cluster(matches: list[tuple[int, float]]) -> tuple[int, int, float] | None:
+    if len(matches) < ASR_MIN_MATCHES:
+        return None
+    total_weight = sum(weight for _, weight in matches)
+    if total_weight <= 0:
+        return None
+    best_center = 0
+    best_score = -1.0
+    for center, _ in matches:
+        score = sum(weight for delta, weight in matches if abs(delta - center) <= ASR_DELAY_CLUSTER_MS)
+        if score > best_score:
+            best_score = score
+            best_center = center
+    inliers = [(delta, weight) for delta, weight in matches if abs(delta - best_center) <= ASR_DELAY_CLUSTER_MS]
+    if len(inliers) < ASR_MIN_MATCHES:
+        return None
+    delay_ms = _weighted_median(inliers)
+    return delay_ms, len(inliers), max(0.0, min(1.0, best_score / total_weight))
+
+
 def _base_from_asset(a: SeriesAsset) -> str:
     title = (a.title or a.asset_id or "").strip().lower()
     title = re.sub(r"[^a-z0-9]+", "_", title).strip("_")
@@ -49,6 +91,19 @@ def _base_from_asset(a: SeriesAsset) -> str:
     season = a.season or 0
     episode = a.episode or 0
     return f"S{season:02d}E{episode:02d}_{title[:80]}"
+
+
+def _auto_delay_clip_starts(duration_s: float | None) -> list[float | None]:
+    if duration_s is None or duration_s <= AUTO_DELAY_ASR_SEGMENT_S:
+        return [None]
+
+    max_start = max(0.0, duration_s - AUTO_DELAY_ASR_SEGMENT_S)
+    primary = min(AUTO_DELAY_PRIMARY_START_S, max_start)
+    middle = max(0.0, (duration_s / 2.0) - (AUTO_DELAY_ASR_SEGMENT_S / 2.0))
+    starts: list[float | None] = [primary]
+    if abs(middle - primary) >= 1.0:
+        starts.append(middle)
+    return starts
 
 
 def _activity_intervals_from_cues(cues: list[Cue], *, bin_ms: int, n_bins: int) -> list[tuple[int, int]]:
@@ -199,134 +254,151 @@ def _estimate_by_asr(
     asr_vad_method: str,
     asr_mlx_model: str,
     max_ms: int,
+    save_asr_srt: Path | None = None,
 ) -> DelayEstimate | None:
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w+b",
-        prefix=f"auto_delay.{base}.",
-        suffix=".srt",
-        dir=tmp_dir,
-        delete=False,
-    ) as tmp:
-        asr_srt = Path(tmp.name)
-    clip_path: Path | None = None
-    clip_source = mp4_path
-    clip_start_ms = 0
-    clip_end_ms = 0
     duration_s = probe_duration_seconds(mp4_path)
-    if duration_s and duration_s > AUTO_DELAY_ASR_SEGMENT_S:
-        start_s = max(0.0, (duration_s / 2.0) - (AUTO_DELAY_ASR_SEGMENT_S / 2.0))
-        clip_start_ms = int(start_s * 1000)
-        clip_end_ms = int((start_s + AUTO_DELAY_ASR_SEGMENT_S) * 1000)
+    for start_s in _auto_delay_clip_starts(duration_s):
+        clip_path: Path | None = None
+        clip_source = mp4_path
+        clip_start_ms = 0
+        clip_end_ms = 0
+        if start_s is not None:
+            clip_start_ms = int(start_s * 1000)
+            clip_end_ms = int((start_s + AUTO_DELAY_ASR_SEGMENT_S) * 1000)
+            with tempfile.NamedTemporaryFile(
+                mode="w+b",
+                prefix=f"auto_delay.{base}.",
+                suffix=".wav",
+                dir=tmp_dir,
+                delete=False,
+            ) as tmp_clip:
+                clip_path = Path(tmp_clip.name)
+            try:
+                run_ffmpeg(
+                    [
+                        "-y",
+                        "-ss",
+                        f"{start_s:.3f}",
+                        "-t",
+                        f"{AUTO_DELAY_ASR_SEGMENT_S:.3f}",
+                        "-i",
+                        str(mp4_path),
+                        "-vn",
+                        "-ac",
+                        "1",
+                        "-ar",
+                        "16000",
+                        "-f",
+                        "wav",
+                        str(clip_path),
+                    ]
+                )
+                debug(
+                    "subtitle auto-delay ASR clip: "
+                    f"start={start_s:.1f}s dur={AUTO_DELAY_ASR_SEGMENT_S}s"
+                )
+                clip_source = clip_path
+            except Exception:
+                try:
+                    clip_path.unlink()
+                except OSError:
+                    pass
+                clip_path = None
+                continue
         with tempfile.NamedTemporaryFile(
             mode="w+b",
             prefix=f"auto_delay.{base}.",
-            suffix=".wav",
+            suffix=".srt",
             dir=tmp_dir,
             delete=False,
-        ) as tmp_clip:
-            clip_path = Path(tmp_clip.name)
+        ) as tmp:
+            asr_srt = Path(tmp.name)
         try:
-            run_ffmpeg(
-                [
-                    "-y",
-                    "-ss",
-                    f"{start_s:.3f}",
-                    "-t",
-                    f"{AUTO_DELAY_ASR_SEGMENT_S:.3f}",
-                    "-i",
-                    str(mp4_path),
-                    "-vn",
-                    "-ac",
-                    "1",
-                    "-ar",
-                    "16000",
-                    "-f",
-                    "wav",
-                    str(clip_path),
-                ]
-            )
-            debug(
-                "subtitle auto-delay ASR clip: "
-                f"start={start_s:.1f}s dur={AUTO_DELAY_ASR_SEGMENT_S}s"
-            )
-            clip_source = clip_path
-        except Exception:
+            if asr_backend == "mlx":
+                transcribe_es_to_srt_with_mlx_whisper(
+                    media_path=clip_source, out_srt=asr_srt, model_repo=asr_mlx_model
+                )
+            else:
+                transcribe_es_to_srt_with_whisperx(
+                    media_path=clip_source,
+                    out_srt=asr_srt,
+                    model=asr_model,
+                    device=asr_device,
+                    compute_type="int8",
+                    batch_size=asr_batch_size,
+                    vad_method=asr_vad_method,
+                )
+            if save_asr_srt is not None:
+                save_asr_srt.parent.mkdir(parents=True, exist_ok=True)
+                save_asr_srt.write_text(asr_srt.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+                debug(f"subtitle auto-delay ASR transcript saved: {save_asr_srt}")
+            asr_cues = parse_srt(asr_srt.read_text(encoding="utf-8", errors="replace"))
+        finally:
             try:
-                clip_path.unlink()
+                asr_srt.unlink()
             except OSError:
                 pass
-            clip_path = None
-    try:
-        if asr_backend == "mlx":
-            transcribe_es_to_srt_with_mlx_whisper(
-                media_path=clip_source, out_srt=asr_srt, model_repo=asr_mlx_model
-            )
+            if clip_path is not None:
+                try:
+                    clip_path.unlink()
+                except OSError:
+                    pass
+        if not asr_cues:
+            continue
+        if clip_start_ms and clip_end_ms:
+            sub_t = [
+                (_norm_text(c.text), c.start_ms)
+                for c in cues
+                if _norm_text(c.text) and clip_start_ms <= c.start_ms <= clip_end_ms
+            ]
+            asr_t = [
+                (_norm_text(c.text), c.start_ms + clip_start_ms)
+                for c in asr_cues
+                if _norm_text(c.text)
+            ]
         else:
-            transcribe_es_to_srt_with_whisperx(
-                media_path=clip_source,
-                out_srt=asr_srt,
-                model=asr_model,
-                device=asr_device,
-                compute_type="int8",
-                batch_size=asr_batch_size,
-                vad_method=asr_vad_method,
-            )
-        asr_cues = parse_srt(asr_srt.read_text(encoding="utf-8", errors="replace"))
-    finally:
-        try:
-            asr_srt.unlink()
-        except OSError:
-            pass
-        if clip_path is not None:
-            try:
-                clip_path.unlink()
-            except OSError:
-                pass
-    if not asr_cues:
-        return None
-    if clip_start_ms and clip_end_ms:
-        sub_t = [
-            (_norm_text(c.text), c.start_ms)
-            for c in cues
-            if _norm_text(c.text) and clip_start_ms <= c.start_ms <= clip_end_ms
-        ]
-        asr_t = [
-            (_norm_text(c.text), c.start_ms + clip_start_ms)
-            for c in asr_cues
-            if _norm_text(c.text)
-        ]
-    else:
-        sub_t = [(_norm_text(c.text), c.start_ms) for c in cues if _norm_text(c.text)]
-        asr_t = [(_norm_text(c.text), c.start_ms) for c in asr_cues if _norm_text(c.text)]
-    if not sub_t or not asr_t:
-        return None
+            sub_t = [(_norm_text(c.text), c.start_ms) for c in cues if _norm_text(c.text)]
+            asr_t = [(_norm_text(c.text), c.start_ms) for c in asr_cues if _norm_text(c.text)]
+        if not sub_t or not asr_t:
+            continue
 
-    deltas: list[int] = []
-    sims: list[float] = []
-    j = 0
-    for st, s_ms in sub_t:
-        best_sim = 0.0
-        best_j = -1
-        hi = min(len(asr_t), j + 25)
-        for k in range(j, hi):
-            at, a_ms = asr_t[k]
-            sim = SequenceMatcher(None, st, at).ratio()
-            if sim > best_sim:
-                best_sim = sim
-                best_j = k
-        if best_j >= 0 and best_sim >= ASR_MATCH_SIM_MIN:
-            # Positive delay means subtitles should move later.
-            delta = asr_t[best_j][1] - s_ms
-            if abs(delta) <= max_ms:
-                deltas.append(delta)
-                sims.append(best_sim)
-                j = best_j
-    if len(deltas) < ASR_MIN_MATCHES:
-        return None
-    delay_ms = int(statistics.median(deltas))
-    confidence = min(1.0, len(deltas) / 40.0) * (sum(sims) / len(sims))
-    return DelayEstimate(delay_ms=delay_ms, confidence=confidence, method="asr", matched=len(deltas))
+        matches: list[tuple[int, float]] = []
+        sims: list[float] = []
+        j = 0
+        for st, s_ms in sub_t:
+            best_sim = 0.0
+            best_j = -1
+            hi = min(len(asr_t), j + 25)
+            for k in range(j, hi):
+                at, a_ms = asr_t[k]
+                sim = SequenceMatcher(None, st, at).ratio()
+                if sim > best_sim:
+                    best_sim = sim
+                    best_j = k
+            if best_j >= 0 and best_sim >= ASR_MATCH_SIM_MIN:
+                text_chars = min(_text_char_len(st), _text_char_len(asr_t[best_j][0]))
+                if text_chars < ASR_SHORT_TEXT_CHARS and best_sim < ASR_SHORT_TEXT_STRONG_SIM_MIN:
+                    continue
+                # Positive delay means subtitles should move later.
+                delta = asr_t[best_j][1] - s_ms
+                if abs(delta) <= max_ms:
+                    weight = best_sim * max(1.0, min(32.0, float(text_chars)))
+                    matches.append((delta, weight))
+                    sims.append(best_sim)
+                    j = best_j
+        selected = _select_delay_cluster(matches)
+        if selected is None:
+            continue
+        delay_ms, matched, cluster_ratio = selected
+        debug(
+            "subtitle auto-delay ASR cluster: "
+            f"delay_ms={delay_ms} matched={matched}/{len(matches)} cluster_ratio={cluster_ratio:.3f}"
+        )
+        confidence = cluster_ratio * min(1.0, matched / 40.0) * (sum(sims) / len(sims))
+        return DelayEstimate(delay_ms=delay_ms, confidence=confidence, method="asr", matched=matched)
+
+    return None
 
 
 def estimate_series_delay_ms(
@@ -346,6 +418,7 @@ def estimate_series_delay_ms(
     asr_batch_size: int,
     asr_vad_method: str,
     asr_mlx_model: str,
+    save_asr_srt_dir: Path | None = None,
 ) -> int:
     local_candidates: list[tuple[str, Path, Path]] = []
     for a in assets:
@@ -388,9 +461,19 @@ def estimate_series_delay_ms(
                     asr_vad_method=asr_vad_method,
                     asr_mlx_model=asr_mlx_model,
                     max_ms=max_ms,
+                    save_asr_srt=(
+                        save_asr_srt_dir / f"{base}.auto_delay.{asr_backend}.srt"
+                        if save_asr_srt_dir is not None else None
+                    ),
                 )
                 if asr_est is not None:
                     est = asr_est
+                elif est is not None:
+                    debug(
+                        "subtitle auto-delay: discarding low-confidence energy estimate "
+                        f"for {base} because ASR produced no usable match"
+                    )
+                    est = None
             if est is None:
                 continue
             estimates.append(est)

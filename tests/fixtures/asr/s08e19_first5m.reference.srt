@@ -1,0 +1,390 @@
+1
+00:00:29,000 --> 00:00:30,960
+...tú que has vivido...
+
+2
+00:00:32,360 --> 00:00:33,720
+...el despertar...
+
+3
+00:00:34,920 --> 00:00:38,000
+...de un tiempo que nos cambió.
+
+4
+00:00:39,960 --> 00:00:41,480
+Volverás...
+
+5
+00:00:43,800 --> 00:00:45,600
+...a ser un niño...
+
+6
+00:00:47,320 --> 00:00:48,480
+...al recordar...
+
+7
+00:00:49,880 --> 00:00:52,840
+...las largas tardes de sol.
+
+8
+00:00:54,880 --> 00:00:59,400
+Háblame
+de lo que has encontrado...
+
+9
+00:00:59,560 --> 00:01:02,000
+...en tu largo caminar.
+
+10
+00:01:02,520 --> 00:01:03,960
+Cuéntame...
+
+11
+00:01:04,439 --> 00:01:05,880
+...cómo te ha ido,...
+
+12
+00:01:06,040 --> 00:01:09,760
+...si has conocido la felicidad.
+
+13
+00:01:09,920 --> 00:01:11,040
+Cuéntame...
+
+14
+00:01:11,200 --> 00:01:13,280
+...cómo te ha ido,...
+
+15
+00:01:13,440 --> 00:01:17,720
+...si has conocido la felicidad.
+
+16
+00:01:19,560 --> 00:01:21,200
+Sentirás...
+
+17
+00:01:22,920 --> 00:01:24,520
+...el dulce abrazo...
+
+18
+00:01:26,880 --> 00:01:28,960
+...de aquellos padres...
+
+19
+00:01:29,720 --> 00:01:32,120
+...que dieron todo por ti.
+
+20
+00:01:34,000 --> 00:01:36,000
+El sabor...
+
+21
+00:01:37,960 --> 00:01:40,040
+...del primer beso,...
+
+22
+00:01:41,840 --> 00:01:43,680
+...todos los sueños...
+
+23
+00:01:44,800 --> 00:01:47,360
+...que tú querías cumplir.
+
+24
+00:01:48,880 --> 00:01:49,880
+Háblame...
+
+25
+00:01:50,040 --> 00:01:53,440
+"Martillo de herejes,
+vigía de Occidente".
+
+26
+00:01:53,600 --> 00:01:58,040
+"Con esos apelativos, pocos aquí
+eran otra cosa que lo que todos:"
+
+27
+00:01:58,200 --> 00:02:00,600
+"Católicos, apostólicos y romanos".
+
+28
+00:02:00,760 --> 00:02:03,840
+"Pero lo de romano
+yo no lo entendía muy bien".
+
+29
+00:02:04,000 --> 00:02:06,280
+"Porque yo nací en Madrid".
+
+30
+00:02:06,440 --> 00:02:10,560
+"Desde niños, aprendíamos que éramos
+cristianos por la gracia de Dios".
+
+31
+00:02:10,720 --> 00:02:12,520
+"Que Dios era uno y trino".
+
+32
+00:02:12,680 --> 00:02:15,960
+"Y Jesús, su hijo,
+era Dios y hombre a la vez".
+
+33
+00:02:16,120 --> 00:02:20,640
+"Ser español y católico venía en el
+mismo paquete y nadie se negaba".
+
+34
+00:02:20,800 --> 00:02:24,120
+"Al musulmán, al protestante
+o al no creyente...
+
+35
+00:02:24,280 --> 00:02:26,400
+...les esperaba el ostracismo".
+
+36
+00:02:26,560 --> 00:02:31,080
+"Muchas trabas legales y el infierno
+por los siglos de los siglos".
+
+37
+00:02:31,240 --> 00:02:36,160
+"Pero en los 70, algo empezó a
+cambiar en la cristianísima España".
+
+38
+00:02:36,320 --> 00:02:39,680
+Para unos, la tentación es el demonio
+de la bebida.
+
+39
+00:02:39,840 --> 00:02:42,840
+Para otros,
+la adquisición de riquezas.
+
+40
+00:02:43,000 --> 00:02:44,600
+La sed de poder.
+
+41
+00:02:44,760 --> 00:02:46,440
+La lujuria de la carne.
+
+42
+00:02:46,600 --> 00:02:48,040
+Ven aquí.
+
+43
+00:02:48,200 --> 00:02:52,240
+Y os preguntaréis por qué Dios
+permite la tentación.
+
+44
+00:02:52,400 --> 00:02:54,640
+¡Jesús, Mercedes, qué poca gente!
+
+45
+00:02:54,800 --> 00:02:57,480
+Cada vez viene menos gente a misa.
+
+46
+00:02:57,640 --> 00:03:00,200
+Porque las tentaciones vencidas...
+
+47
+00:03:00,360 --> 00:03:01,480
+Y Luis no viene.
+
+48
+00:03:01,640 --> 00:03:04,040
+-Es domingo.
+Está en los futbolines.
+
+49
+00:03:04,200 --> 00:03:05,200
+¡Qué potra!
+
+50
+00:03:05,360 --> 00:03:06,720
+¡Valentina!
+
+51
+00:03:07,600 --> 00:03:08,920
+¡Estamos en misa!
+
+52
+00:03:09,080 --> 00:03:11,040
+-Perdón.
+No sé qué ha pasado.
+
+53
+00:03:12,360 --> 00:03:13,880
+-Dice San Pablo...
+
+54
+00:03:14,040 --> 00:03:17,440
+-Estaba soñando con ese moreno fuerte
+camionero.
+
+55
+00:03:17,600 --> 00:03:19,520
+-Arraigadas en nosotros.
+
+56
+00:03:23,000 --> 00:03:27,120
+-Sabrá mucho de misterios,
+pero dando misa es un petardo.
+
+57
+00:03:27,280 --> 00:03:29,760
+¡Cuánto echo de menos a tu yerno!
+
+58
+00:03:29,920 --> 00:03:33,440
+Su misa era otra cosa.
+Entendía el placer de la carne.
+
+59
+00:03:33,600 --> 00:03:36,400
+¡Cómo no!
+Y las pasiones humanas.
+
+60
+00:03:36,560 --> 00:03:39,920
+Para pecar con mi yerno,
+había que pecar en gordo.
+
+61
+00:03:40,080 --> 00:03:41,840
+Y con éste, que a la mínima...
+
+62
+00:03:42,000 --> 00:03:43,280
+-¡Me aburro, papá!
+
+63
+00:03:44,040 --> 00:03:45,520
+Ven aquí.
+¡Por Dios!
+
+64
+00:03:47,160 --> 00:03:49,720
+Desiderio, ¿tú vas a comulgar?
+
+65
+00:03:49,880 --> 00:03:52,040
+-Imposible, he comido porras.
+
+66
+00:03:52,200 --> 00:03:53,760
+Y si comulgo, peco.
+
+67
+00:03:53,920 --> 00:03:57,920
+Pues vámonos, que ya tenemos
+suficiente y ésta está bostezando.
+
+68
+00:03:58,080 --> 00:03:59,320
+¡Qué buena idea!
+
+69
+00:03:59,600 --> 00:04:01,040
+¿Y a qué esperamos?
+
+70
+00:04:05,120 --> 00:04:06,800
+¡Si hasta Antonio se va!
+
+71
+00:04:06,960 --> 00:04:11,800
+Menos mal que has hecho el sofrito
+de la paella, porque a este paso...
+
+72
+00:04:14,600 --> 00:04:16,200
+Tú dirás lo que quieras.
+
+73
+00:04:16,360 --> 00:04:20,160
+Pero para mí, tu yerno era
+el Kiko Ledgard de los curas.
+
+74
+00:04:20,319 --> 00:04:21,520
+¡Sí, ya!
+
+75
+00:04:22,040 --> 00:04:24,200
+Oye, ¿y qué pasa contigo?
+
+76
+00:04:24,360 --> 00:04:27,120
+Debes de estar ganando dinero
+a espuertas.
+
+77
+00:04:27,280 --> 00:04:28,920
+¿Pero por qué dices eso?
+
+78
+00:04:29,080 --> 00:04:32,320
+Llevo un mes sin verte.
+Todo el día trabajando..
+
+79
+00:04:32,480 --> 00:04:35,040
+Dentro de nada,
+te compras un Mercedes.
+
+80
+00:04:35,200 --> 00:04:38,400
+En lo mío, a veces estás arriba
+y a veces, abajo.
+
+81
+00:04:38,560 --> 00:04:42,040
+-Has ganado un yerno,
+pero menudo cura hemos perdido.
+
+82
+00:04:42,200 --> 00:04:43,400
+¡Mira el otro!
+
+83
+00:04:43,560 --> 00:04:47,760
+-A mí no me ha ido nada mal. He
+tenido un mes de rebajas muy bueno.
+
+84
+00:04:47,920 --> 00:04:49,320
+¿Te han ido bien?
+
+85
+00:04:49,480 --> 00:04:52,360
+Pues sí,
+pero en pequeños electrodomésticos.
+
+86
+00:04:52,520 --> 00:04:56,560
+Porque casi todos tienen lavadora,
+lavavajillas, frigorífico.
+
+87
+00:04:56,720 --> 00:04:57,720
+Ya.
+
+88
+00:04:57,880 --> 00:04:59,680
+-Os va bien, ¿no?
+-Hombre...
+
+89
+00:04:59,840 --> 00:05:00,000
+-Pues acercaos al taller,
+que me debéis pasta.
+
